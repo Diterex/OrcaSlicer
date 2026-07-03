@@ -301,6 +301,18 @@ static t_config_enum_values s_keys_map_PrintOrder{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrintOrder)
 
+static t_config_enum_values s_keys_map_ClayMode{
+    { "off",       int(ClayMode::Off) },
+    { "vase_plus", int(ClayMode::VasePlus) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ClayMode)
+
+static t_config_enum_values s_keys_map_ClayStartGCodeMode{
+    { "stock",       int(ClayStartGCodeMode::Stock) },
+    { "clay_native", int(ClayStartGCodeMode::ClayNative) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ClayStartGCodeMode)
+
 static t_config_enum_values s_keys_map_SlicingMode {
     { "regular",        int(SlicingMode::Regular) },
     { "even_odd",       int(SlicingMode::EvenOdd) },
@@ -5899,6 +5911,66 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("clay_mode", coEnum);
+    def->label = L("Clay mode");
+    def->category = L("Process");
+    def->tooltip = L("Enable Clay Vase Plus warnings and startup handling for wet-clay spiral printing workflows.");
+    def->enum_keys_map = &ConfigOptionEnum<ClayMode>::get_enum_values();
+    def->enum_values.emplace_back("off");
+    def->enum_values.emplace_back("vase_plus");
+    def->enum_labels.emplace_back(L("Off"));
+    def->enum_labels.emplace_back(L("Vase Plus"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ClayMode>(ClayMode::Off));
+
+    def = this->add("clay_nominal_bead_width_mm", coFloat);
+    def->label = L("Clay nominal bead width");
+    def->category = L("Process");
+    def->tooltip = L("Reference bead width used by Clay Vase Plus analysis. This does not change the slicer line width by itself.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("clay_nominal_layer_height_mm", coFloat);
+    def->label = L("Clay nominal layer height");
+    def->category = L("Process");
+    def->tooltip = L("Reference layer height used by Clay Vase Plus analysis. This does not change the sliced layer height by itself.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("clay_max_unsupported_step_mm", coFloat);
+    def->label = L("Clay max unsupported step");
+    def->category = L("Process");
+    def->tooltip = L("Maximum outward unsupported step to target during Clay Vase Plus analysis.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("clay_continuous_path_required", coBool);
+    def->label = L("Require continuous clay path");
+    def->category = L("Process");
+    def->tooltip = L("Warn when Clay Vase Plus detects settings that are likely to break continuous deposition.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("clay_disable_retracts", coBool);
+    def->label = L("Prefer no retracts");
+    def->category = L("Process");
+    def->tooltip = L("Warn when retract-related settings are active in Clay Vase Plus mode.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("clay_disable_z_hop", coBool);
+    def->label = L("Prefer no Z hop");
+    def->category = L("Process");
+    def->tooltip = L("Warn when Z-hop is active in Clay Vase Plus mode.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("spiral_mode_smooth", coBool);
     def->label = L("Smooth Spiral");
     def->tooltip = L("Smooth Spiral smooths out X and Y moves as well, "
@@ -6004,6 +6076,17 @@ void PrintConfigDef::init_fff_params()
     def->height = 12;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionString("G28 ; home all axes\nG1 Z5 F5000 ; lift nozzle\n"));
+
+    def = this->add("clay_start_gcode_mode", coEnum);
+    def->label = L("Clay start G-code mode");
+    def->tooltip = L("When Clay Vase Plus is active, choose whether to leave start G-code untouched or remove obvious filament-style purge and retract lines.");
+    def->enum_keys_map = &ConfigOptionEnum<ClayStartGCodeMode>::get_enum_values();
+    def->enum_values.emplace_back("stock");
+    def->enum_values.emplace_back("clay_native");
+    def->enum_labels.emplace_back(L("Stock"));
+    def->enum_labels.emplace_back(L("Clay native"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ClayStartGCodeMode>(ClayStartGCodeMode::Stock));
 
     def = this->add("filament_start_gcode", coStrings);
     def->label = L("Start G-code");

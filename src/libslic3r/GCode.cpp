@@ -236,6 +236,67 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             gcode += '\n';
     }
 
+    static std::string trim_copy(std::string value)
+    {
+        boost::trim(value);
+        return value;
+    }
+
+    static std::string lowercase_copy(std::string value)
+    {
+        boost::to_lower(value);
+        return value;
+    }
+
+    static bool clay_mode_active(const FullPrintConfig &config)
+    {
+        return config.clay_mode.value == ClayMode::VasePlus;
+    }
+
+    static bool clay_native_startup_enabled(const FullPrintConfig &config)
+    {
+        return clay_mode_active(config) && config.clay_start_gcode_mode.value == ClayStartGCodeMode::ClayNative;
+    }
+
+    static bool line_has_xy_motion(const std::string &line)
+    {
+        return line.find('X') != std::string::npos || line.find('Y') != std::string::npos;
+    }
+
+    static bool line_looks_like_clay_hostile_retract(const std::string &line)
+    {
+        static const std::regex negative_e_move(R"((?:^|\s)E-\d)");
+        const std::string lowered = lowercase_copy(trim_copy(line));
+        if (lowered.empty() || lowered.front() == ';')
+            return false;
+        return std::regex_search(lowered, negative_e_move) || lowered.find("g10") == 0 || lowered.find("retract") != std::string::npos;
+    }
+
+    static bool line_looks_like_clay_hostile_purge(const std::string &line)
+    {
+        const std::string lowered = lowercase_copy(trim_copy(line));
+        if (lowered.empty() || lowered.front() == ';')
+            return false;
+        if (lowered.find("purge") != std::string::npos || lowered.find("prime line") != std::string::npos || lowered.find("wipe line") != std::string::npos)
+            return true;
+        return line_has_xy_motion(lowered) && lowered.find('e') != std::string::npos && (lowered.find("g0") == 0 || lowered.find("g1") == 0);
+    }
+
+    static std::string sanitize_clay_native_start_gcode(const std::string &gcode)
+    {
+        std::istringstream input(gcode);
+        std::ostringstream output;
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line_looks_like_clay_hostile_retract(line) || line_looks_like_clay_hostile_purge(line)) {
+                output << "; Clay Vase Plus removed startup line: " << trim_copy(line) << "\n";
+                continue;
+            }
+            output << line << "\n";
+        }
+        return output.str();
+    }
+
 
     // Return true if tch_prefix is found in custom_gcode
     static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std::string& tch_prefix, unsigned next_extruder)
@@ -3117,6 +3178,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     this->placeholder_parser().set("used_filament_length", new ConfigOptionString(GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Used_Filament_Length_Placeholder)));
 
     std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    if (clay_native_startup_enabled(print.config()))
+        machine_start_gcode = sanitize_clay_native_start_gcode(machine_start_gcode);
     if (print.config().gcode_flavor != gcfKlipper) {
         // Set bed temperature if the start G-code does not contain any bed temp control G-codes.
         this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, true);

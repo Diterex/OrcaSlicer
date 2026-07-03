@@ -67,6 +67,52 @@ struct FilamentType {
     std::string temp_type;
 };
 
+static std::string trim_copy(std::string value)
+{
+    boost::trim(value);
+    return value;
+}
+
+static std::string lowercase_copy(std::string value)
+{
+    boost::to_lower(value);
+    return value;
+}
+
+static bool clay_mode_active(const PrintConfig &config)
+{
+    return config.clay_mode.value == ClayMode::VasePlus;
+}
+
+static bool line_has_xy_motion(const std::string &line)
+{
+    return line.find('X') != std::string::npos || line.find('Y') != std::string::npos;
+}
+
+static bool line_looks_like_startup_retract(const std::string &line)
+{
+    static const boost::regex negative_e_move(R"((?:^|\s)E-\d)");
+    const std::string lowered = lowercase_copy(trim_copy(line));
+    if (lowered.empty() || lowered.front() == ';')
+        return false;
+    return boost::regex_search(lowered, negative_e_move) || lowered.find("g10") == 0 || lowered.find("retract") != std::string::npos;
+}
+
+static bool line_looks_like_purge_or_prime(const std::string &line)
+{
+    const std::string lowered = lowercase_copy(trim_copy(line));
+    if (lowered.empty() || lowered.front() == ';')
+        return false;
+    if (lowered.find("purge") != std::string::npos || lowered.find("prime line") != std::string::npos || lowered.find("wipe line") != std::string::npos)
+        return true;
+    return line_has_xy_motion(lowered) && lowered.find('e') != std::string::npos && (lowered.find("g0") == 0 || lowered.find("g1") == 0);
+}
+
+static int estimate_restart_burden_from_retraction_lengths(const ConfigOptionFloats &values)
+{
+    return int(std::count_if(values.values.begin(), values.values.end(), [](double value) { return value > EPSILON; }));
+}
+
 void Print::clear()
 {
 	std::scoped_lock<std::mutex> lock(this->state_mutex());
@@ -193,6 +239,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "preheat_time",
         "preheat_steps",
         "machine_start_gcode",
+        "clay_start_gcode_mode",
         "filament_start_gcode",
         "change_filament_gcode",
         "wipe",
@@ -242,7 +289,14 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "filament_notes",
         "process_notes",
         "printer_notes",
-        "use_3mf"
+        "use_3mf",
+        "clay_mode",
+        "clay_nominal_bead_width_mm",
+        "clay_nominal_layer_height_mm",
+        "clay_max_unsupported_step_mm",
+        "clay_continuous_path_required",
+        "clay_disable_retracts",
+        "clay_disable_z_hop"
     };
 
     static std::unordered_set<std::string> steps_ignore;
@@ -1261,6 +1315,92 @@ StringObjectException Print::check_multi_filament_valid(const Print& print)
 
 // Precondition: Print::validate() requires the Print::apply() to be called its invocation.
 //BBS: refine seq-print validation logic
+void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *warnings) const
+{
+    ClayVasePlusAnalysisResult analysis;
+    analysis.metric_snapshot.nominal_bead_width_mm = m_config.clay_nominal_bead_width_mm.value;
+    analysis.metric_snapshot.nominal_layer_height_mm = m_config.clay_nominal_layer_height_mm.value;
+
+    if (!clay_mode_active(m_config)) {
+        m_clay_vase_plus_analysis = std::move(analysis);
+        return;
+    }
+
+    analysis.clay_mode_active = true;
+    analysis.overall_risk_level = "guarded";
+
+    auto add_warning = [&](const std::string &code, const std::string &severity, const std::string &category,
+                           const std::string &message, const std::string &metric, const std::string &opt_key = std::string()) {
+        analysis.warnings.push_back({code, severity, category, message, metric, -1.0});
+        if (warnings != nullptr) {
+            StringObjectException w;
+            w.is_warning = true;
+            w.string = message;
+            w.opt_key = opt_key;
+            warnings->push_back(std::move(w));
+        }
+    };
+
+    if (!m_config.spiral_mode.value) {
+        add_warning("CVP_SPIRAL_MODE_REQUIRED", "medium", "mode",
+            L("Clay Vase Plus is intended for spiral vase workflows; enable Spiral vase for the current first-pass implementation."),
+            "spiral_mode=false", "spiral_mode");
+        analysis.overall_risk_level = "high_risk";
+        analysis.risk_distribution_mode = "mixed";
+    }
+
+    const int restart_burden = estimate_restart_burden_from_retraction_lengths(m_config.retraction_length);
+    analysis.metric_snapshot.retract_count = restart_burden;
+    analysis.metric_snapshot.max_retraction_length_mm =
+        m_config.retraction_length.values.empty() ? 0.0 : *std::max_element(m_config.retraction_length.values.begin(), m_config.retraction_length.values.end());
+    analysis.metric_snapshot.max_z_hop_mm =
+        m_config.z_hop.values.empty() ? 0.0 : *std::max_element(m_config.z_hop.values.begin(), m_config.z_hop.values.end());
+
+    if (m_config.clay_disable_retracts.value && analysis.metric_snapshot.max_retraction_length_mm > EPSILON) {
+        add_warning("CVP_RETRACT_BURDEN_HIGH", "high", "restart",
+            L("Clay Vase Plus detected active retraction settings. Wet-clay flow is usually more stable with retracts disabled."),
+            "max_retraction_length_mm=" + Slic3r::format("%.4f", analysis.metric_snapshot.max_retraction_length_mm), "retraction_length");
+        analysis.base_rescue_complexity.has_restart_heavy_transition = true;
+        analysis.base_rescue_complexity.level = "medium";
+        analysis.overall_risk_level = "high_risk";
+    }
+
+    if (m_config.clay_disable_z_hop.value && analysis.metric_snapshot.max_z_hop_mm > EPSILON) {
+        add_warning("CVP_ZHOP_WARNING", "medium", "travel",
+            L("Clay Vase Plus detected active Z-hop. Wet clay usually benefits from direct continuous deposition without lift events."),
+            "max_z_hop_mm=" + Slic3r::format("%.4f", analysis.metric_snapshot.max_z_hop_mm), "z_hop");
+        if (analysis.overall_risk_level != "high_risk")
+            analysis.overall_risk_level = "guarded";
+    }
+
+    std::istringstream start_stream(m_config.machine_start_gcode.value);
+    std::string start_line;
+    while (std::getline(start_stream, start_line)) {
+        if (!analysis.startup_compatibility.startup_retract_risk && line_looks_like_startup_retract(start_line))
+            analysis.startup_compatibility.startup_retract_risk = true;
+        if (!analysis.startup_compatibility.purge_like_start_detected && line_looks_like_purge_or_prime(start_line))
+            analysis.startup_compatibility.purge_like_start_detected = true;
+    }
+
+    if (analysis.startup_compatibility.startup_retract_risk) {
+        add_warning("CVP_STARTUP_RETRACT_WARNING", "high", "startup",
+            L("Clay Vase Plus found a retract-like line in the start G-code. Startup retracts are usually hostile to wet-clay pressure continuity."),
+            "machine_start_gcode contains retract-like motion", "machine_start_gcode");
+        analysis.startup_compatibility.status = "warning";
+        analysis.overall_risk_level = "high_risk";
+    }
+
+    if (analysis.startup_compatibility.purge_like_start_detected) {
+        add_warning("CVP_STARTUP_PURGE_WARNING", "medium", "startup",
+            L("Clay Vase Plus found a purge-like line in the start G-code. Consider clay-native startup to avoid filament-style priming motions."),
+            "machine_start_gcode contains purge-like motion", "machine_start_gcode");
+        if (analysis.startup_compatibility.status == "compatible")
+            analysis.startup_compatibility.status = "warning";
+    }
+
+    m_clay_vase_plus_analysis = std::move(analysis);
+}
+
 StringObjectException Print::validate(std::vector<StringObjectException> *warnings, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
 {
     auto add_warning = [warnings](StringObjectException w) {
@@ -1275,6 +1415,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
         w.object  = object;
         add_warning(std::move(w));
     };
+    m_clay_vase_plus_analysis = ClayVasePlusAnalysisResult{};
 
     std::vector<unsigned int> extruders = this->extruders();
     unsigned int nozzles = m_config.nozzle_diameter.size();
@@ -1357,6 +1498,8 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
             }
         }
     }
+
+    this->update_clay_vase_plus_analysis(warnings);
 
     // Cache of layer height profiles for checking:
     // 1) Whether all layers are synchronized if printing with wipe tower and / or unsynchronized supports.

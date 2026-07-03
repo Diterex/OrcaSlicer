@@ -867,6 +867,70 @@ struct StatisticsByExtruderCount
     }
 };
 
+struct ClayVasePlusWarning
+{
+    std::string code;
+    std::string severity;
+    std::string category;
+    std::string message;
+    std::string metric;
+    double      z_hint_mm { -1.0 };
+};
+
+struct ClayVasePlusBodyFragmentationZone
+{
+    bool   detected { false };
+    double z_start_mm { -1.0 };
+    double z_end_mm { -1.0 };
+    int    peak_outer_wall_sections { 0 };
+    int    peak_overhang_wall_sections { 0 };
+};
+
+struct ClayVasePlusBaseRescueComplexity
+{
+    std::string level { "none" };
+    double      highest_risk_z_mm { -1.0 };
+    bool        has_gap_infill { false };
+    bool        has_restart_heavy_transition { false };
+};
+
+struct ClayVasePlusSupportMarginSummary
+{
+    std::string status { "not_computed" };
+    double      first_warning_z_mm { -1.0 };
+    double      worst_margin_mm { 0.0 };
+};
+
+struct ClayVasePlusStartupCompatibility
+{
+    std::string status { "compatible" };
+    bool        purge_like_start_detected { false };
+    bool        startup_retract_risk { false };
+};
+
+struct ClayVasePlusMetricSnapshot
+{
+    int    retract_count { 0 };
+    double max_retraction_length_mm { 0.0 };
+    double max_z_hop_mm { 0.0 };
+    double nominal_bead_width_mm { 0.0 };
+    double nominal_layer_height_mm { 0.0 };
+};
+
+struct ClayVasePlusAnalysisResult
+{
+    int                                  analysis_version { 1 };
+    bool                                 clay_mode_active { false };
+    std::string                          overall_risk_level { "not_applicable" };
+    std::string                          risk_distribution_mode { "clean_control" };
+    ClayVasePlusBodyFragmentationZone    body_fragmentation_zone;
+    ClayVasePlusBaseRescueComplexity     base_rescue_complexity;
+    ClayVasePlusSupportMarginSummary     support_margin_summary;
+    ClayVasePlusStartupCompatibility     startup_compatibility;
+    ClayVasePlusMetricSnapshot           metric_snapshot;
+    std::vector<ClayVasePlusWarning>     warnings;
+};
+
 enum FilamentTempType {
     HighTemp=0,
     LowTemp,
@@ -942,6 +1006,7 @@ public:
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
     double              max_allowed_layer_height() const;
     bool                has_support_material() const;
+    const ClayVasePlusAnalysisResult& clay_vase_plus_analysis() const { return m_clay_vase_plus_analysis; }
     // Make sure the background processing has no access to this model_object during this call!
     void                auto_assign_extruders(ModelObject* model_object) const;
 
@@ -1136,6 +1201,7 @@ protected:
 private:
     //BBS
     static StringObjectException check_multi_filament_valid(const Print &print);
+    void                update_clay_vase_plus_analysis(std::vector<StringObjectException> *warnings) const;
 
     bool                has_tpu_filament() const;
     bool                invalidate_state_by_config_options(const ConfigOptionResolver &new_config, const std::vector<t_config_option_key> &opt_keys);
@@ -1203,6 +1269,7 @@ private:
     Calib_Params m_calib_params;
 
     bool m_need_check_multi_filaments_compatibility{true};
+    mutable ClayVasePlusAnalysisResult m_clay_vase_plus_analysis;
 
     // To allow GCode to set the Print's GCodeExport step status.
     friend class GCode;

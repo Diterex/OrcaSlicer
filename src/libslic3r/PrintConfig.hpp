@@ -159,6 +159,18 @@ enum class PrintOrder
     Count,
 };
 
+enum class ClayMode
+{
+    Off,
+    VasePlus,
+};
+
+enum class ClayStartGCodeMode
+{
+    Stock,
+    ClayNative,
+};
+
 enum class SlicingMode
 {
     // Regular, applying ClipperLib::pftNonZero rule when creating ExPolygons.
@@ -554,6 +566,8 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(InputShaperType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(DraftShield)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ClayMode)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ClayStartGCodeMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForwardCompatibilitySubstitutionRule)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeThumbnailsFormat)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
@@ -1409,6 +1423,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,              retraction_speed))
     ((ConfigOptionString,              file_start_gcode))
     ((ConfigOptionString,              machine_start_gcode))
+    ((ConfigOptionEnum<ClayStartGCodeMode>, clay_start_gcode_mode))
     ((ConfigOptionStrings,             filament_start_gcode))
     ((ConfigOptionBool,                single_extruder_multi_material))
     ((ConfigOptionBool,                manual_filament_change))
@@ -1574,6 +1589,13 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             nozzle_diameter))
     ((ConfigOptionBool,               reduce_infill_retraction))
     ((ConfigOptionBool,               ooze_prevention))
+    ((ConfigOptionEnum<ClayMode>,     clay_mode))
+    ((ConfigOptionFloat,              clay_nominal_bead_width_mm))
+    ((ConfigOptionFloat,              clay_nominal_layer_height_mm))
+    ((ConfigOptionFloat,              clay_max_unsupported_step_mm))
+    ((ConfigOptionBool,               clay_continuous_path_required))
+    ((ConfigOptionBool,               clay_disable_retracts))
+    ((ConfigOptionBool,               clay_disable_z_hop))
     ((ConfigOptionString,             filename_format))
     ((ConfigOptionStrings,            post_process))
     ((ConfigOptionString,             printer_model))

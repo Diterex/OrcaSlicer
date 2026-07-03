@@ -337,3 +337,36 @@ TEST_CASE("Print::validate tolerates a null warnings pointer", "[Print][validate
     StringObjectException err = print.validate();  // warnings == nullptr
     CHECK(err.string.empty());
 }
+
+TEST_CASE("Print::validate records Clay Vase Plus startup and motion warnings", "[Print][validate][ClayVasePlus]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("clay_mode", new ConfigOptionEnum<ClayMode>(ClayMode::VasePlus));
+    config.set_key_value("clay_disable_retracts", new ConfigOptionBool(true));
+    config.set_key_value("clay_disable_z_hop", new ConfigOptionBool(true));
+    config.set_key_value("retraction_length", new ConfigOptionFloats{ 1.5 });
+    config.set_key_value("z_hop", new ConfigOptionFloats{ 0.8 });
+    config.set_key_value("machine_start_gcode", new ConfigOptionString("G28\nG1 E-1.25 F300\nG1 X97.123 Y4.5 E6.75 F812\n"));
+
+    Slic3r::Model model;
+    Slic3r::Print print;
+    build_cubes(model, print, config, /*n=*/1, /*overlap=*/false);
+
+    std::vector<StringObjectException> warnings;
+    StringObjectException err = print.validate(&warnings);
+
+    CHECK(err.string.empty());
+    CHECK(count_opt_key(warnings, "spiral_mode") == 1);
+    CHECK(count_opt_key(warnings, "retraction_length") == 1);
+    CHECK(count_opt_key(warnings, "z_hop") == 1);
+    CHECK(count_opt_key(warnings, "machine_start_gcode") == 2);
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.overall_risk_level == "high_risk");
+    CHECK(analysis.startup_compatibility.startup_retract_risk);
+    CHECK(analysis.startup_compatibility.purge_like_start_detected);
+    CHECK(analysis.metric_snapshot.max_retraction_length_mm == Catch::Approx(1.5));
+    CHECK(analysis.metric_snapshot.max_z_hop_mm == Catch::Approx(0.8));
+    CHECK(analysis.warnings.size() >= 4);
+}
