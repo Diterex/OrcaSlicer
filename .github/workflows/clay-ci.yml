@@ -1,0 +1,79 @@
+name: Clay CI
+
+# CeramicaSlicer (Clay Vase Plus) verification workflow.
+# Runs the Linux build + unit tests on clay branches, reusing the upstream
+# build_check_cache -> build_deps -> build_orca chain so the deps cache and
+# build logic stay identical to upstream CI. The aarch64 leg is used because
+# build_orca.yml builds and tars the unit tests on that leg.
+
+on:
+  push:
+    branches:
+      - clay-vase-plus
+      - clay/*
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - '**/CMakeLists.txt'
+      - 'version.inc'
+      - 'tests/**'
+      - '.github/workflows/build_*.yml'
+      - '.github/workflows/clay-ci.yml'
+  pull_request:
+    branches:
+      - clay-vase-plus
+  workflow_dispatch:
+
+concurrency:
+  group: clay-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_linux:
+    name: Build Linux (aarch64, with tests)
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: ubuntu-24.04-arm
+      arch: aarch64
+    secrets: inherit
+
+  unit_tests:
+    name: Unit Tests
+    runs-on: ubuntu-24.04-arm
+    needs: build_linux
+    if: ${{ !cancelled() && success() }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github
+            scripts
+            tests
+      - name: Apt-Install Dependencies
+        uses: ./.github/actions/apt-install-deps
+      - name: Restore Test Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ github.sha }}-tests
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~4.3.0"
+          useLocalCache: true
+          useCloudCache: true
+      - name: Unpackage and Run Unit Tests
+        timeout-minutes: 20
+        run: |
+          tar -xvf build_tests.tar
+          scripts/run_unit_tests.sh
+      - name: Upload Test Logs
+        uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        with:
+          name: clay-unit-test-logs
+          path: build/tests/**/*.log
+      - name: Publish Test Results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: "ctest_results.xml"
