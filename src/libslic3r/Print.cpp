@@ -1433,7 +1433,11 @@ void Print::update_clay_body_continuity_analysis() const
         double z { 0. };
         int    external_runs { 0 };
         int    overhang_runs { 0 };
-        int    gap_fill_entities { 0 };
+        // Gap fills markedly narrower than the wall bead. Ordinary FFF gap
+        // fill at ~wall width is benign; the clay-hostile rescue signature is
+        // gap fill at a small fraction of the bead (0.66 mm against a 4.62 mm
+        // wall in the Julia+MOP case study).
+        int    narrow_gap_fills { 0 };
     };
 
     // Count contiguous same-role runs of wall paths. A run matches the
@@ -1476,7 +1480,20 @@ void Print::update_clay_body_continuity_analysis() const
         stats.z = layer->print_z;
         for (const LayerRegion *layerm : layer->regions()) {
             walk(&layerm->perimeters, stats);
-            stats.gap_fill_entities += int(layerm->thin_fills.entities.size());
+            const float narrow_width = 0.5f * layerm->flow(frExternalPerimeter).width();
+            std::function<void(const ExtrusionEntity *)> count_narrow = [&](const ExtrusionEntity *entity) {
+                if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity)) {
+                    if (path->width < narrow_width)
+                        ++ stats.narrow_gap_fills;
+                } else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(entity)) {
+                    for (const ExtrusionPath &p : multi_path->paths)
+                        if (p.width < narrow_width) { ++ stats.narrow_gap_fills; break; }
+                } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+                    for (const ExtrusionEntity *child : collection->entities)
+                        count_narrow(child);
+            };
+            for (const ExtrusionEntity *entity : layerm->thin_fills.entities)
+                count_narrow(entity);
         }
         layer_stats.push_back(stats);
     }
@@ -1488,9 +1505,9 @@ void Print::update_clay_body_continuity_analysis() const
     double base_worst_z = -1.0;
     int    base_worst_count = 0;
     for (int i = 0; i < transition_end; ++ i) {
-        base_gap_fills += layer_stats[i].gap_fill_entities;
-        if (layer_stats[i].gap_fill_entities > base_worst_count) {
-            base_worst_count = layer_stats[i].gap_fill_entities;
+        base_gap_fills += layer_stats[i].narrow_gap_fills;
+        if (layer_stats[i].narrow_gap_fills > base_worst_count) {
+            base_worst_count = layer_stats[i].narrow_gap_fills;
             base_worst_z = layer_stats[i].z;
         }
     }
