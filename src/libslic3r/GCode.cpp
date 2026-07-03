@@ -248,12 +248,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         return value;
     }
 
-    static bool clay_mode_active(const FullPrintConfig &config)
+    static bool clay_mode_active(const PrintConfig &config)
     {
         return config.clay_mode.value == ClayMode::VasePlus;
     }
 
-    static bool clay_native_startup_enabled(const FullPrintConfig &config)
+    static bool clay_native_startup_enabled(const PrintConfig &config)
     {
         return clay_mode_active(config) && config.clay_start_gcode_mode.value == ClayStartGCodeMode::ClayNative;
     }
