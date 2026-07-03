@@ -370,3 +370,50 @@ TEST_CASE("Print::validate records Clay Vase Plus startup and motion warnings", 
     CHECK(analysis.metric_snapshot.max_z_hop_mm == Catch::Approx(0.8));
     CHECK(analysis.warnings.size() >= 4);
 }
+
+TEST_CASE("Clay Vase Plus body continuity classifies a plain cube as clean control", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "clay_mode", "vase_plus" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.risk_distribution_mode == "clean_control");
+    CHECK_FALSE(analysis.body_fragmentation_zone.detected);
+}
+
+TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphere", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
+        { "clay_mode", "vase_plus" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    // The lower hemisphere produces sustained overhang-wall paths.
+    CHECK(analysis.body_fragmentation_zone.detected);
+    CHECK(analysis.body_fragmentation_zone.peak_overhang_wall_sections >= 1);
+    const bool body_mode = analysis.risk_distribution_mode == "body_spread" || analysis.risk_distribution_mode == "mixed";
+    CHECK(body_mode);
+    CHECK(analysis.overall_risk_level == "high_risk");
+}
+
+TEST_CASE("Clay Vase Plus body continuity stays inert when clay mode is off", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model);
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK_FALSE(analysis.clay_mode_active);
+    CHECK_FALSE(analysis.body_fragmentation_zone.detected);
+    CHECK(analysis.warnings.empty());
+}

@@ -1202,6 +1202,9 @@ private:
     //BBS
     static StringObjectException check_multi_filament_valid(const Print &print);
     void                update_clay_vase_plus_analysis(std::vector<StringObjectException> *warnings) const;
+    // Clay Vase Plus Track B1: body continuity extraction from generated
+    // perimeters. Read-only over sliced layers; called at the end of process().
+    void                update_clay_body_continuity_analysis() const;
 
     bool                has_tpu_filament() const;
     bool                invalidate_state_by_config_options(const ConfigOptionResolver &new_config, const std::vector<t_config_option_key> &opt_keys);

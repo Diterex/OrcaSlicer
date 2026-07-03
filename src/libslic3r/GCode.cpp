@@ -258,14 +258,16 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         return clay_mode_active(config) && config.clay_start_gcode_mode.value == ClayStartGCodeMode::ClayNative;
     }
 
+    // Expects an already-lowercased line.
     static bool line_has_xy_motion(const std::string &line)
     {
-        return line.find('X') != std::string::npos || line.find('Y') != std::string::npos;
+        return line.find('x') != std::string::npos || line.find('y') != std::string::npos;
     }
 
     static bool line_looks_like_clay_hostile_retract(const std::string &line)
     {
-        static const std::regex negative_e_move(R"((?:^|\s)E-\d)");
+        // Matched against the lowercased line below.
+        static const std::regex negative_e_move(R"((?:^|\s)e-\d)");
         const std::string lowered = lowercase_copy(trim_copy(line));
         if (lowered.empty() || lowered.front() == ';')
             return false;

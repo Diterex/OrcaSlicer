@@ -22,6 +22,7 @@
 #include <float.h>
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <unordered_set>
@@ -84,14 +85,16 @@ static bool clay_mode_active(const PrintConfig &config)
     return config.clay_mode.value == ClayMode::VasePlus;
 }
 
+// Expects an already-lowercased line.
 static bool line_has_xy_motion(const std::string &line)
 {
-    return line.find('X') != std::string::npos || line.find('Y') != std::string::npos;
+    return line.find('x') != std::string::npos || line.find('y') != std::string::npos;
 }
 
 static bool line_looks_like_startup_retract(const std::string &line)
 {
-    static const boost::regex negative_e_move(R"((?:^|\s)E-\d)");
+    // Matched against the lowercased line below.
+    static const boost::regex negative_e_move(R"((?:^|\s)e-\d)");
     const std::string lowered = lowercase_copy(trim_copy(line));
     if (lowered.empty() || lowered.front() == ';')
         return false;
@@ -1399,6 +1402,159 @@ void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *w
     }
 
     m_clay_vase_plus_analysis = std::move(analysis);
+}
+
+// Clay Vase Plus Track B1: extract body continuity signals from the generated
+// wall structure. Reads LayerRegion::perimeters / thin_fills only; no slicing
+// behavior changes. Fills body_fragmentation_zone, base_rescue_complexity and
+// risk_distribution_mode of the analysis result created by validate().
+void Print::update_clay_body_continuity_analysis() const
+{
+    if (!clay_mode_active(m_config) || m_objects.empty())
+        return;
+
+    ClayVasePlusAnalysisResult &analysis = m_clay_vase_plus_analysis;
+    analysis.clay_mode_active = true;
+    if (analysis.overall_risk_level == "not_applicable")
+        analysis.overall_risk_level = "guarded";
+
+    // Vase workflows are single-object; analyze the first object with layers.
+    const PrintObject *object = nullptr;
+    for (const PrintObject *candidate : m_objects)
+        if (!candidate->layers().empty()) { object = candidate; break; }
+    if (object == nullptr)
+        return;
+
+    int base_layers = 0;
+    for (size_t region_idx = 0; region_idx < object->num_printing_regions(); ++ region_idx)
+        base_layers = std::max(base_layers, object->printing_region(region_idx).config().bottom_shell_layers.value);
+
+    struct LayerRoleStats {
+        double z { 0. };
+        int    external_runs { 0 };
+        int    overhang_runs { 0 };
+        int    gap_fill_entities { 0 };
+    };
+
+    // Count contiguous same-role runs of wall paths. A run matches the
+    // ";TYPE:" section semantics of the G-code case metrics: repeated
+    // Outer wall / Overhang wall alternation within one loop is the
+    // body-spread fragmentation signature (contract metric M1/M6).
+    std::function<void(const ExtrusionEntity *, LayerRoleStats &)> walk =
+        [&walk](const ExtrusionEntity *entity, LayerRoleStats &stats) {
+        auto count_paths = [&stats](const ExtrusionPaths &paths) {
+            ExtrusionRole previous = erNone;
+            for (const ExtrusionPath &path : paths) {
+                ExtrusionRole role = path.role();
+                if (role != previous) {
+                    if (role == erExternalPerimeter)
+                        ++ stats.external_runs;
+                    else if (role == erOverhangPerimeter)
+                        ++ stats.overhang_runs;
+                    previous = role;
+                }
+            }
+        };
+        if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(entity))
+            count_paths(loop->paths);
+        else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(entity))
+            count_paths(multi_path->paths);
+        else if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity)) {
+            if (path->role() == erExternalPerimeter)
+                ++ stats.external_runs;
+            else if (path->role() == erOverhangPerimeter)
+                ++ stats.overhang_runs;
+        } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+            for (const ExtrusionEntity *child : collection->entities)
+                walk(child, stats);
+    };
+
+    std::vector<LayerRoleStats> layer_stats;
+    layer_stats.reserve(object->layers().size());
+    for (const Layer *layer : object->layers()) {
+        LayerRoleStats stats;
+        stats.z = layer->print_z;
+        for (const LayerRegion *layerm : layer->regions()) {
+            walk(&layerm->perimeters, stats);
+            stats.gap_fill_entities += int(layerm->thin_fills.entities.size());
+        }
+        layer_stats.push_back(stats);
+    }
+
+    // Base rescue complexity (metric M7): gap-fill rescue structure in the
+    // base and the transition right above it.
+    const int transition_end = std::min<int>(base_layers + 3, int(layer_stats.size()));
+    int    base_gap_fills = 0;
+    double base_worst_z = -1.0;
+    int    base_worst_count = 0;
+    for (int i = 0; i < transition_end; ++ i) {
+        base_gap_fills += layer_stats[i].gap_fill_entities;
+        if (layer_stats[i].gap_fill_entities > base_worst_count) {
+            base_worst_count = layer_stats[i].gap_fill_entities;
+            base_worst_z = layer_stats[i].z;
+        }
+    }
+    analysis.base_rescue_complexity.has_gap_infill = base_gap_fills > 0;
+    analysis.base_rescue_complexity.highest_risk_z_mm = base_worst_z;
+    if (base_gap_fills >= 15)
+        analysis.base_rescue_complexity.level = "high";
+    else if (base_gap_fills >= 5)
+        analysis.base_rescue_complexity.level = "medium";
+    else if (base_gap_fills > 0)
+        analysis.base_rescue_complexity.level = "guarded";
+
+    // Body fragmentation zone (metric M6): first sustained run (>= 3
+    // consecutive body layers) of mixed wall roles.
+    auto  &zone = analysis.body_fragmentation_zone;
+    int    consecutive = 0;
+    bool   zone_open = false;
+    for (int i = base_layers; i < int(layer_stats.size()); ++ i) {
+        const LayerRoleStats &stats = layer_stats[i];
+        const bool mixed = stats.external_runs >= 2 || stats.overhang_runs >= 1;
+        if (mixed) {
+            ++ consecutive;
+            if (consecutive >= 3 && !zone.detected) {
+                zone.detected = true;
+                zone_open = true;
+                zone.z_start_mm = layer_stats[i - consecutive + 1].z;
+            }
+            if (zone_open) {
+                zone.z_end_mm = stats.z;
+                zone.peak_outer_wall_sections = std::max(zone.peak_outer_wall_sections, stats.external_runs);
+                zone.peak_overhang_wall_sections = std::max(zone.peak_overhang_wall_sections, stats.overhang_runs);
+            }
+        } else {
+            consecutive = 0;
+            zone_open = false;
+        }
+    }
+
+    // Risk distribution mode (metric M8).
+    const bool base_concentrated = analysis.base_rescue_complexity.level == "medium" || analysis.base_rescue_complexity.level == "high";
+    if (zone.detected && base_concentrated)
+        analysis.risk_distribution_mode = "mixed";
+    else if (zone.detected)
+        analysis.risk_distribution_mode = "body_spread";
+    else if (base_concentrated)
+        analysis.risk_distribution_mode = "base_concentrated";
+    else
+        analysis.risk_distribution_mode = "clean_control";
+
+    if (zone.detected) {
+        analysis.overall_risk_level = "high_risk";
+        analysis.warnings.push_back({"CVP_WALL_FRAGMENTATION_HIGH", "high", "continuity",
+            L("Clay Vase Plus found a sustained body region with fragmented wall roles; continuous clay deposition is at risk there."),
+            Slic3r::format("zone_z=%.2f-%.2f, peak_outer=%d, peak_overhang=%d",
+                zone.z_start_mm, zone.z_end_mm, zone.peak_outer_wall_sections, zone.peak_overhang_wall_sections),
+            zone.z_start_mm});
+    }
+    if (base_concentrated) {
+        analysis.overall_risk_level = "high_risk";
+        analysis.warnings.push_back({"CVP_NARROW_GAP_MEDIUM", "medium", "base_rescue",
+            L("Clay Vase Plus found gap-fill rescue structure in the base region; narrow rescue features are usually filament-oriented and clay-hostile."),
+            Slic3r::format("base_gap_fill_entities=%d", base_gap_fills),
+            base_worst_z});
+    }
 }
 
 StringObjectException Print::validate(std::vector<StringObjectException> *warnings, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
@@ -2770,6 +2926,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
             BOOST_LOG_TRIVIAL(error) << boost::format("gcode path conflicts found between %1% and %2%")%conflictRes.value()._objName1 %conflictRes.value()._objName2;
         }
     }
+
+    this->update_clay_body_continuity_analysis();
 
     BOOST_LOG_TRIVIAL(info) << "Slicing process finished." << log_memory_info();
 }
