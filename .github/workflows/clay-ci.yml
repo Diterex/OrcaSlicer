@@ -80,3 +80,48 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: "ctest_results.xml"
+
+  trust_gate:
+    # The roadmap's trust gate as a regression test: slice the three
+    # case-study corpus models with the freshly built slicer and assert the
+    # classifications (tumbler=clean_control, Julia=body_spread,
+    # Julia+MOP=base_concentrated).
+    name: Clay Trust Gate
+    runs-on: ubuntu-24.04-arm
+    needs: build_linux
+    if: ${{ !cancelled() && success() }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github
+            scripts
+            tests/data/clay_corpus
+      - name: Apt-Install Dependencies
+        uses: ./.github/actions/apt-install-deps
+      - name: Install xvfb
+        run: sudo apt-get install -y xvfb
+      - name: Download AppImage
+        uses: actions/download-artifact@v8
+        with:
+          pattern: OrcaSlicer_Linux_ubuntu_*
+          merge-multiple: true
+      - name: Extract AppImage
+        run: |
+          chmod +x OrcaSlicer_Linux_AppImage*.AppImage
+          ./OrcaSlicer_Linux_AppImage*.AppImage --appimage-extract > /dev/null
+      - name: Run trust gate
+        timeout-minutes: 30
+        run: |
+          xvfb-run -a python3 scripts/clay_trust_gate.py \
+            --corpus tests/data/clay_corpus \
+            --slicer ./squashfs-root/AppRun \
+            --out /tmp/trust-gate
+      - name: Upload sliced G-code on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: trust-gate-gcode
+          path: /tmp/trust-gate/**/*.gcode
+          if-no-files-found: ignore

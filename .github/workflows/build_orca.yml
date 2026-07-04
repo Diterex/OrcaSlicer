@@ -446,6 +446,21 @@ jobs:
         if: runner.os == 'Linux' && !vars.SELF_HOSTED
         uses: ./.github/actions/apt-install-deps
 
+      # Clay fork: compiler cache to cut CI iteration time. build_linux.sh
+      # auto-detects ccache on PATH; only install + cache persistence needed.
+      - name: Install ccache
+        if: runner.os == 'Linux' && !vars.SELF_HOSTED
+        run: |
+          sudo apt-get install -y ccache
+          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
+      - name: Cache compiler cache
+        if: runner.os == 'Linux' && !vars.SELF_HOSTED
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-${{ inputs.arch }}-${{ github.sha }}
+          restore-keys: ccache-linux-${{ inputs.arch }}-
+
         # Tests must built at the same time as the slicer;
         # if you untangle them feel free to separate them here too
       - name: Build slicer and tests

@@ -1,0 +1,5 @@
+[
+  { "name": "tumbler_control",   "model": "tumbler_v7.3mf",              "gcode": "Tumbler v7_223.097g_23m23s_$18.6816.gcode",                                             "expected": "clean_control" },
+  { "name": "julia_baseline",    "model": "julia_heatwave_baseline.3mf", "gcode": "Julia_Vase_011_-_Heatwave_-_Shell_979.69g_1h58m_$83.2708.gcode",                        "expected": "body_spread" },
+  { "name": "julia_mop",         "model": "julia_heatwave_mop.3mf",      "gcode": "MakeOverhangsPrintable Julia_Vase_011_-_Heatwave_-_Shell_1181.28g_2h26m_$100.73.gcode", "expected": "base_concentrated" }
+]
