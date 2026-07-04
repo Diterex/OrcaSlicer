@@ -386,6 +386,24 @@ TEST_CASE("Clay Vase Plus body continuity classifies a plain cube as clean contr
     CHECK_FALSE(analysis.body_fragmentation_zone.detected);
 }
 
+TEST_CASE("Clay Vase Plus body continuity flags sub-bead gap fill as base rescue", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // With a declared clay bead, the cube's small FFF gap fills fall far
+    // below the 35% narrowness threshold and count as rescue structure.
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "clay_mode", "vase_plus" },
+        { "clay_nominal_bead_width_mm", 4.62 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.base_rescue_complexity.has_gap_infill);
+    CHECK(analysis.risk_distribution_mode == "base_concentrated");
+}
+
 TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphere", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;

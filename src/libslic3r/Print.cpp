@@ -1433,10 +1433,12 @@ void Print::update_clay_body_continuity_analysis() const
         double z { 0. };
         int    external_runs { 0 };
         int    overhang_runs { 0 };
-        // Gap fills markedly narrower than the wall bead. Ordinary FFF gap
-        // fill at ~wall width is benign; the clay-hostile rescue signature is
-        // gap fill at a small fraction of the bead (0.66 mm against a 4.62 mm
-        // wall in the Julia+MOP case study).
+        // Gap fills markedly narrower than the nominal clay bead. Ordinary
+        // FFF gap fill (tiny corner gaps at any nozzle scale) is benign; the
+        // clay-hostile rescue signature is gap fill at a small fraction of
+        // the clay bead (0.66 mm against a 4.62 mm bead in the Julia+MOP
+        // case study). Without a declared clay_nominal_bead_width_mm the
+        // metric cannot be judged and stays off.
         int    narrow_gap_fills { 0 };
     };
 
@@ -1478,9 +1480,10 @@ void Print::update_clay_body_continuity_analysis() const
     for (const Layer *layer : object->layers()) {
         LayerRoleStats stats;
         stats.z = layer->print_z;
+        const double clay_bead = m_config.clay_nominal_bead_width_mm.value;
+        const float  narrow_width = clay_bead > EPSILON ? float(0.35 * clay_bead) : 0.f;
         for (const LayerRegion *layerm : layer->regions()) {
             walk(&layerm->perimeters, stats);
-            const float narrow_width = 0.5f * layerm->flow(frExternalPerimeter).width();
             std::function<void(const ExtrusionEntity *)> count_narrow = [&](const ExtrusionEntity *entity) {
                 if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity)) {
                     if (path->width < narrow_width)
