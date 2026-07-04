@@ -901,6 +901,32 @@ struct ClayVasePlusSupportMarginSummary
     double      worst_margin_mm { 0.0 };
 };
 
+// B2: per-loop support-advance field (docs/b2-support-margin-contract.md §3).
+// arc_pos is normalized [0,1) along the loop; advance[i] is the exact
+// horizontal point-to-segment distance from sample i to the wall loop below.
+// Consumed by Track C (C1 step-relief, C2 field optimizer) as constraint input.
+struct ClaySupportMarginLoop
+{
+    int                 layer_idx { -1 };
+    double              z_mm { 0.0 };
+    double              a_max_mm { 0.0 };
+    double              dz_budget_mm { 0.0 };
+    std::vector<double> arc_pos;
+    std::vector<double> advance_mm;
+
+    double worst_advance_mm() const {
+        double worst = 0.0;
+        for (double a : advance_mm) worst = std::max(worst, a);
+        return worst;
+    }
+    double violating_fraction() const {
+        if (advance_mm.empty()) return 0.0;
+        size_t n = 0;
+        for (double a : advance_mm) if (a > a_max_mm) ++ n;
+        return double(n) / double(advance_mm.size());
+    }
+};
+
 struct ClayVasePlusStartupCompatibility
 {
     std::string status { "compatible" };
@@ -929,6 +955,8 @@ struct ClayVasePlusAnalysisResult
     ClayVasePlusStartupCompatibility     startup_compatibility;
     ClayVasePlusMetricSnapshot           metric_snapshot;
     std::vector<ClayVasePlusWarning>     warnings;
+    // B2 queryable field; empty unless clay mode is active and walls exist.
+    std::vector<ClaySupportMarginLoop>   support_margin_field;
 };
 
 enum FilamentTempType {

@@ -423,6 +423,53 @@ TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphe
     CHECK(analysis.overall_risk_level == "high_risk");
 }
 
+TEST_CASE("Clay Vase Plus support margin: vertical walls are safe", "[Print][ClayVasePlus][SupportMargin]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "clay_mode", "vase_plus" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.support_margin_field.empty());
+    CHECK(analysis.support_margin_summary.status == "safe");
+    CHECK(analysis.support_margin_summary.worst_margin_mm > 0.0);
+}
+
+TEST_CASE("Clay Vase Plus support margin: a 45 degree wall fails the 40 degree envelope", "[Print][ClayVasePlus][SupportMargin]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
+        { "clay_mode", "vase_plus" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.support_margin_field.empty());
+    CHECK(analysis.support_margin_summary.status == "failing");
+    CHECK(analysis.support_margin_summary.worst_margin_mm < 0.0);
+    CHECK(analysis.support_margin_summary.first_warning_z_mm > 0.0);
+}
+
+TEST_CASE("Clay Vase Plus support margin: explicit step override wins", "[Print][ClayVasePlus][SupportMargin]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 5 mm admissible step makes the 45 degree chamfer trivially safe.
+    Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
+        { "clay_mode", "vase_plus" },
+        { "clay_max_unsupported_step_mm", 5.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.support_margin_field.empty());
+    CHECK(analysis.support_margin_summary.status == "safe");
+}
+
 TEST_CASE("Clay Vase Plus body continuity stays inert when clay mode is off", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;

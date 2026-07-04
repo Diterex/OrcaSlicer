@@ -22,6 +22,7 @@
 #include <float.h>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <numeric>
@@ -1574,6 +1575,144 @@ void Print::update_clay_body_continuity_analysis() const
             L("Clay Vase Plus found gap-fill rescue structure in the base region; narrow rescue features are usually filament-oriented and clay-hostile."),
             Slic3r::format("base_gap_fill_entities=%d", base_gap_fills),
             base_worst_z});
+    }
+
+    // ---- B2: support-margin field (docs/b2-support-margin-contract.md) ----
+    // Exact horizontal point-to-segment distance from samples of each wall
+    // loop to the polyline of the loop below. Nearest-SAMPLE shortcuts are a
+    // correctness bug (66 false positives on the tumbler control in the
+    // prototype); keep the segment projection.
+    constexpr double clay_theta_max_deg = 40.0; // process envelope; Track D calibrates
+    constexpr double clay_safety_frac   = 0.10;
+    constexpr double clay_dz_budget_frac = 0.35; // slump budget v1, fraction of layer height
+    const double a_max_override = m_config.clay_max_unsupported_step_mm.value;
+    const double bead           = m_config.clay_nominal_bead_width_mm.value;
+    const double sample_step    = std::max(bead > EPSILON ? 0.5 * bead : 1.0, 1.0);
+    const double tan_theta      = std::tan(clay_theta_max_deg * PI / 180.0);
+
+    // Largest wall loop of a layer (vase workflows have exactly one).
+    auto outer_wall_points_mm = [](const Layer *layer) {
+        const ExtrusionLoop *best = nullptr;
+        double best_area = 0.;
+        std::function<void(const ExtrusionEntity *)> visit = [&](const ExtrusionEntity *entity) {
+            if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(entity)) {
+                for (const ExtrusionPath &p : loop->paths)
+                    if (p.role() == erExternalPerimeter || p.role() == erOverhangPerimeter) {
+                        double area = std::abs(loop->polygon().area());
+                        if (area > best_area) { best_area = area; best = loop; }
+                        break;
+                    }
+            } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+                for (const ExtrusionEntity *child : collection->entities)
+                    visit(child);
+        };
+        for (const LayerRegion *layerm : layer->regions())
+            visit(&layerm->perimeters);
+        std::vector<Vec2d> pts;
+        if (best != nullptr) {
+            const Polygon poly = best->polygon();
+            pts.reserve(poly.points.size());
+            for (const Point &p : poly.points)
+                pts.emplace_back(unscale(p));
+        }
+        return pts;
+    };
+
+    auto min_dist_to_polyline = [](const Vec2d &p, const std::vector<Vec2d> &poly) {
+        double best2 = std::numeric_limits<double>::max();
+        const size_t n = poly.size();
+        for (size_t k = 0; k < n; ++ k) {
+            const Vec2d &a = poly[k];
+            const Vec2d &b = poly[(k + 1) % n];
+            const Vec2d ab = b - a;
+            const double len2 = ab.squaredNorm();
+            double t = len2 > 1e-12 ? std::clamp((p - a).dot(ab) / len2, 0.0, 1.0) : 0.0;
+            best2 = std::min(best2, (p - (a + t * ab)).squaredNorm());
+        }
+        return std::sqrt(best2);
+    };
+
+    auto &summary = analysis.support_margin_summary;
+    std::vector<Vec2d> prev_wall;
+    int    prev_layer_idx = -1;
+    double worst_margin = std::numeric_limits<double>::max();
+    double worst_z = -1.0;
+    bool   any_marginal = false, any_failing = false, any_body_loop = false;
+    const LayerPtrs &object_layers = object->layers();
+    for (int i = 0; i < int(object_layers.size()); ++ i) {
+        const Layer *layer = object_layers[i];
+        std::vector<Vec2d> wall = outer_wall_points_mm(layer);
+        if (wall.size() < 3) {
+            prev_wall.clear();
+            prev_layer_idx = -1;
+            continue;
+        }
+        if (!prev_wall.empty() && prev_layer_idx == i - 1) {
+            ClaySupportMarginLoop loop_field;
+            loop_field.layer_idx = i;
+            loop_field.z_mm = layer->print_z;
+            loop_field.a_max_mm = a_max_override > EPSILON ? a_max_override : layer->height * tan_theta;
+            loop_field.dz_budget_mm = clay_dz_budget_frac * layer->height;
+            // uniform arc resampling of the closed loop
+            double total = 0.;
+            for (size_t k = 0; k < wall.size(); ++ k)
+                total += (wall[(k + 1) % wall.size()] - wall[k]).norm();
+            const int n_samples = std::max(int(total / sample_step), 8);
+            loop_field.arc_pos.reserve(n_samples);
+            loop_field.advance_mm.reserve(n_samples);
+            {
+                double target = 0., walked = 0.;
+                size_t k = 0;
+                double seg_len = (wall[1 % wall.size()] - wall[0]).norm();
+                for (int s = 0; s < n_samples; ++ s, target = total * s / n_samples) {
+                    while (walked + seg_len < target && k + 1 < wall.size() * 2) {
+                        walked += seg_len;
+                        ++ k;
+                        seg_len = (wall[(k + 1) % wall.size()] - wall[k % wall.size()]).norm();
+                    }
+                    const Vec2d &a = wall[k % wall.size()];
+                    const Vec2d &b = wall[(k + 1) % wall.size()];
+                    const double frac = seg_len > 1e-12 ? std::clamp((target - walked) / seg_len, 0.0, 1.0) : 0.0;
+                    const Vec2d sample = a + frac * (b - a);
+                    loop_field.arc_pos.push_back(total > 1e-9 ? target / total : 0.0);
+                    loop_field.advance_mm.push_back(min_dist_to_polyline(sample, prev_wall));
+                }
+            }
+            if (i >= base_layers) {
+                any_body_loop = true;
+                const double worst_a = loop_field.worst_advance_mm();
+                const double margin = loop_field.a_max_mm - worst_a;
+                if (margin < worst_margin) {
+                    worst_margin = margin;
+                    worst_z = loop_field.z_mm;
+                }
+                const bool failing  = worst_a > loop_field.a_max_mm;
+                const bool marginal = !failing && worst_a > (1.0 - clay_safety_frac) * loop_field.a_max_mm;
+                if ((failing || marginal) && summary.first_warning_z_mm < 0.)
+                    summary.first_warning_z_mm = loop_field.z_mm;
+                any_failing  |= failing;
+                any_marginal |= marginal;
+            }
+            analysis.support_margin_field.push_back(std::move(loop_field));
+        }
+        prev_wall = std::move(wall);
+        prev_layer_idx = i;
+    }
+    if (any_body_loop) {
+        summary.status = any_failing ? "failing" : (any_marginal ? "marginal" : "safe");
+        summary.worst_margin_mm = worst_margin == std::numeric_limits<double>::max() ? 0.0 : worst_margin;
+        if (any_failing) {
+            analysis.overall_risk_level = "high_risk";
+            analysis.warnings.push_back({"CVP_SUPPORT_MARGIN_FAILING", "high", "support_margin",
+                L("Clay Vase Plus measured an unsupported outward step beyond the process envelope; the wall is expected to sag or fail there."),
+                Slic3r::format("worst_margin_mm=%.3f at z=%.2f", summary.worst_margin_mm, worst_z),
+                worst_z});
+        } else if (any_marginal) {
+            analysis.warnings.push_back({"CVP_SUPPORT_MARGIN_MARGINAL", "medium", "support_margin",
+                L("Clay Vase Plus measured an unsupported outward step close to the process envelope; consider slowing down or reducing the overhang."),
+                Slic3r::format("worst_margin_mm=%.3f at z=%.2f", summary.worst_margin_mm, worst_z),
+                worst_z});
+        }
     }
 }
 
