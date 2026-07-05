@@ -276,7 +276,7 @@ TEST_CASE("Initial layer height is honored", "[PrintGCode]")
     REQUIRE_THAT(*std::next(layer_zs.begin()), Catch::Matchers::WithinAbs(0.5, 1e-4));
 }
 
-TEST_CASE("Clay Vase Plus clay-native startup strips purge-like start lines", "[PrintGCode][ClayVasePlus]")
+TEST_CASE("LDM Vase Plus clay-native startup strips purge-like start lines", "[PrintGCode][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
@@ -285,27 +285,27 @@ TEST_CASE("Clay Vase Plus clay-native startup strips purge-like start lines", "[
         { "initial_layer_print_height", 0.2 },
         { "initial_layer_line_width",   0 },
         { "gcode_comments",             true },
-        { "clay_printer",               true },
-        { "clay_start_gcode_mode",      "clay_native" },
+        { "ldm_modded_printer",               true },
+        { "ldm_start_gcode_mode",      "clay_native" },
         { "machine_start_gcode",        "G28\nG1 E-1.25 F300\nG1 X97.123 Y4.5 E6.75 F812\nM117 clay\n" },
         { "z_hop",                      0 }
     });
 
     std::string gcode = Slic3r::Test::gcode(print);
 
-    REQUIRE(gcode.find("; Clay Vase Plus removed startup line: G1 E-1.25 F300") != std::string::npos);
-    REQUIRE(gcode.find("; Clay Vase Plus removed startup line: G1 X97.123 Y4.5 E6.75 F812") != std::string::npos);
+    REQUIRE(gcode.find("; LDM Vase Plus removed startup line: G1 E-1.25 F300") != std::string::npos);
+    REQUIRE(gcode.find("; LDM Vase Plus removed startup line: G1 X97.123 Y4.5 E6.75 F812") != std::string::npos);
     REQUIRE(gcode.find("\nG1 E-1.25 F300\n") == std::string::npos);
     REQUIRE(gcode.find("\nG1 X97.123 Y4.5 E6.75 F812\n") == std::string::npos);
     REQUIRE(gcode.find("M117 clay") != std::string::npos);
 }
 
-TEST_CASE("Clay Vase Plus writes an analysis sidecar next to exported G-code", "[PrintGCode][ClayVasePlus]")
+TEST_CASE("LDM Vase Plus writes an analysis sidecar next to exported G-code", "[PrintGCode][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_printer",               true }
+        { "ldm_modded_printer",               true }
     });
     print.set_status_silent();
     print.process();
@@ -314,12 +314,12 @@ TEST_CASE("Clay Vase Plus writes an analysis sidecar next to exported G-code", "
         boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("clay-sidecar-%%%%%%%%.gcode");
     print.export_gcode(gcode_path.string(), nullptr, nullptr);
     boost::filesystem::path sidecar = gcode_path;
-    sidecar += ".clay-analysis.json";
+    sidecar += ".ldm-analysis.json";
 
     REQUIRE(boost::filesystem::exists(sidecar));
     std::ifstream sidecar_stream(sidecar.string());
     nlohmann::json j = nlohmann::json::parse(sidecar_stream);
-    CHECK(j["clay_mode_active"] == true);
+    CHECK(j["ldm_active"] == true);
     CHECK(j["support_margin_summary"]["status"] == "safe");
     CHECK(j["support_margin_field"].size() > 0);
 

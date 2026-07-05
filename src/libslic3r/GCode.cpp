@@ -251,12 +251,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
 
     static bool clay_mode_active(const PrintConfig &config)
     {
-        return config.clay_printer.value;
+        return config.ldm_modded_printer.value;
     }
 
     static bool clay_native_startup_enabled(const PrintConfig &config)
     {
-        return clay_mode_active(config) && config.clay_start_gcode_mode.value == ClayStartGCodeMode::ClayNative;
+        return clay_mode_active(config) && config.ldm_start_gcode_mode.value == ClayStartGCodeMode::ClayNative;
     }
 
     // Expects an already-lowercased line.
@@ -292,7 +292,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         std::string line;
         while (std::getline(input, line)) {
             if (line_looks_like_clay_hostile_retract(line) || line_looks_like_clay_hostile_purge(line)) {
-                output << "; Clay Vase Plus removed startup line: " << trim_copy(line) << "\n";
+                output << "; LDM Vase Plus removed startup line: " << trim_copy(line) << "\n";
                 continue;
             }
             output << line << "\n";
@@ -300,7 +300,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         return output.str();
     }
 
-    // Write the Clay Vase Plus analysis as a sidecar JSON next to the G-code.
+    // Write the LDM Vase Plus analysis as a sidecar JSON next to the G-code.
     // Additive output only; consumed by scripts/clay_trust_gate.py (fixture
     // acceptance for docs/b2-support-margin-contract.md) and future tooling.
     static void export_clay_analysis_sidecar(const Print &print, const std::string &gcode_path)
@@ -308,7 +308,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         const ClayVasePlusAnalysisResult &a = print.clay_vase_plus_analysis();
         nlohmann::json j;
         j["analysis_version"] = a.analysis_version;
-        j["clay_mode_active"] = a.clay_mode_active;
+        j["ldm_active"] = a.clay_mode_active;
         j["overall_risk_level"] = a.overall_risk_level;
         j["risk_distribution_mode"] = a.risk_distribution_mode;
         j["body_fragmentation_zone"] = {
@@ -350,16 +350,16 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 {"worst_advance_mm", loop.worst_advance_mm()},
                 {"violating_fraction", loop.violating_fraction()},
             });
-        const std::string sidecar_path = gcode_path + ".clay-analysis.json";
+        const std::string sidecar_path = gcode_path + ".ldm-analysis.json";
         FILE *fp = boost::nowide::fopen(sidecar_path.c_str(), "wb");
         if (fp == nullptr) {
-            BOOST_LOG_TRIVIAL(warning) << "Clay Vase Plus: cannot write analysis sidecar " << sidecar_path;
+            BOOST_LOG_TRIVIAL(warning) << "LDM Vase Plus: cannot write analysis sidecar " << sidecar_path;
             return;
         }
         const std::string dump = j.dump(2);
         fwrite(dump.data(), 1, dump.size(), fp);
         fclose(fp);
-        BOOST_LOG_TRIVIAL(info) << "Clay Vase Plus: analysis sidecar written to " << sidecar_path;
+        BOOST_LOG_TRIVIAL(info) << "LDM Vase Plus: analysis sidecar written to " << sidecar_path;
     }
 
 

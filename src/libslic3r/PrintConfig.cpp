@@ -308,6 +308,12 @@ static t_config_enum_values s_keys_map_ClayStartGCodeMode{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ClayStartGCodeMode)
 
+static t_config_enum_values s_keys_map_LDMFeedType{
+    { "pneumatic_ram",  int(LDMFeedType::PneumaticRam) },
+    { "mechanical_ram", int(LDMFeedType::MechanicalRam) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(LDMFeedType)
+
 static t_config_enum_values s_keys_map_SlicingMode {
     { "regular",        int(SlicingMode::Regular) },
     { "even_odd",       int(SlicingMode::EvenOdd) },
@@ -3904,14 +3910,66 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
-    def          = this->add("clay_printer", coBool);
-    def->label   = L("Clay / LDM printer");
+    def          = this->add("ldm_modded_printer", coBool);
+    def->label   = L("LDM Modded Printer");
     def->tooltip = L("Enable this option if this machine prints wet clay or another paste (LDM). "
-                     "Activates the Clay Vase Plus analysis for every print on this printer: "
+                     "Activates the LDM Vase Plus analysis for every print on this printer: "
                      "clay-hostile setting warnings, wall continuity and support-margin analysis, "
-                     "and the clay analysis sidecar next to exported G-code.");
+                     "and the LDM analysis sidecar next to exported G-code.");
     def->mode    = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
+
+    def          = this->add("ldm_feed_type", coEnum);
+    def->label   = L("LDM reservoir feed");
+    def->tooltip = L("How material reaches the auger. Pneumatic ram: air pressure feeds the auger and only the auger "
+                     "is G-code controlled. Mechanical ram: a second motor drives the ram, typically configured as a "
+                     "Marlin mixing extruder (M163/M164 in the start G-code) with the mix factor below.");
+    def->enum_keys_map = &ConfigOptionEnum<LDMFeedType>::get_enum_values();
+    def->enum_values.emplace_back("pneumatic_ram");
+    def->enum_values.emplace_back("mechanical_ram");
+    def->enum_labels.emplace_back(L("Pneumatic ram"));
+    def->enum_labels.emplace_back(L("Mechanical ram"));
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionEnum<LDMFeedType>(LDMFeedType::PneumaticRam));
+
+    def          = this->add("ldm_ram_mix_factor", coFloat);
+    def->label   = L("LDM ram mix factor");
+    def->tooltip = L("Mechanical ram only (ignored for pneumatic). The ram's share of the Marlin mixing extruder, "
+                     "e.g. 0.9 means M163 S0 P0.9 for the ram and M163 S1 P0.1 for the auger. Available in start "
+                     "G-code templates as {ldm_ram_mix_factor}. Keep within the small range your hardware tolerates.");
+    def->min     = 0;
+    def->max     = 1;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.9));
+
+    def          = this->add("ldm_reservoir_volume_ml", coFloat);
+    def->label   = L("LDM reservoir volume");
+    def->sidetext = L("ml");
+    def->tooltip = L("Usable material volume of the reservoir (tube/syringe/cartridge) feeding the auger. "
+                     "When set, the slicer compares the print's extruded volume against it and warns with the "
+                     "height at which the reservoir runs dry. 0 disables the check.");
+    def->min     = 0;
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def          = this->add("ldm_tip_cone_angle", coFloat);
+    def->label   = L("LDM tip cone angle");
+    def->sidetext = L("°");
+    def->tooltip = L("Full cone angle of the deposition tip (e.g. the PME Supatube family). Editable per tip swap. "
+                     "Feeds the upcoming tip-collision validation for non-planar printing.");
+    def->min     = 0;
+    def->max     = 180;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def          = this->add("ldm_tip_cone_length", coFloat);
+    def->label   = L("LDM tip cone length");
+    def->sidetext = L("mm");
+    def->tooltip = L("Length of the deposition tip cone from orifice to body. Editable per tip swap. "
+                     "Feeds the upcoming tip-collision validation for non-planar printing.");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
 
     def = this->add("support_multi_bed_types", coBool);
     def->label = L("Support multi bed types");
@@ -5915,51 +5973,51 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
-    def = this->add("clay_nominal_bead_width_mm", coFloat);
+    def = this->add("ldm_nominal_bead_width_mm", coFloat);
     def->label = L("Clay nominal bead width");
     def->category = L("Process");
-    def->tooltip = L("Reference bead width used by Clay Vase Plus analysis. This does not change the slicer line width by itself.");
+    def->tooltip = L("Reference bead width used by LDM Vase Plus analysis. This does not change the slicer line width by itself.");
     def->sidetext = L("mm");
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
-    def = this->add("clay_nominal_layer_height_mm", coFloat);
+    def = this->add("ldm_nominal_layer_height_mm", coFloat);
     def->label = L("Clay nominal layer height");
     def->category = L("Process");
-    def->tooltip = L("Reference layer height used by Clay Vase Plus analysis. This does not change the sliced layer height by itself.");
+    def->tooltip = L("Reference layer height used by LDM Vase Plus analysis. This does not change the sliced layer height by itself.");
     def->sidetext = L("mm");
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
-    def = this->add("clay_max_unsupported_step_mm", coFloat);
+    def = this->add("ldm_max_unsupported_step_mm", coFloat);
     def->label = L("Clay max unsupported step");
     def->category = L("Process");
-    def->tooltip = L("Maximum outward unsupported step to target during Clay Vase Plus analysis.");
+    def->tooltip = L("Maximum outward unsupported step to target during LDM Vase Plus analysis.");
     def->sidetext = L("mm");
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
-    def = this->add("clay_continuous_path_required", coBool);
+    def = this->add("ldm_continuous_path_required", coBool);
     def->label = L("Require continuous clay path");
     def->category = L("Process");
-    def->tooltip = L("Warn when Clay Vase Plus detects settings that are likely to break continuous deposition.");
+    def->tooltip = L("Warn when LDM Vase Plus detects settings that are likely to break continuous deposition.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
-    def = this->add("clay_disable_retracts", coBool);
+    def = this->add("ldm_disable_retracts", coBool);
     def->label = L("Prefer no retracts");
     def->category = L("Process");
-    def->tooltip = L("Warn when retract-related settings are active in Clay Vase Plus mode.");
+    def->tooltip = L("Warn when retract-related settings are active in LDM Vase Plus mode.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
-    def = this->add("clay_disable_z_hop", coBool);
+    def = this->add("ldm_disable_z_hop", coBool);
     def->label = L("Prefer no Z hop");
     def->category = L("Process");
-    def->tooltip = L("Warn when Z-hop is active in Clay Vase Plus mode.");
+    def->tooltip = L("Warn when Z-hop is active in LDM Vase Plus mode.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
@@ -6069,9 +6127,9 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionString("G28 ; home all axes\nG1 Z5 F5000 ; lift nozzle\n"));
 
-    def = this->add("clay_start_gcode_mode", coEnum);
+    def = this->add("ldm_start_gcode_mode", coEnum);
     def->label = L("Clay start G-code mode");
-    def->tooltip = L("When Clay Vase Plus is active, choose whether to leave start G-code untouched or remove obvious filament-style purge and retract lines.");
+    def->tooltip = L("When LDM Vase Plus is active, choose whether to leave start G-code untouched or remove obvious filament-style purge and retract lines.");
     def->enum_keys_map = &ConfigOptionEnum<ClayStartGCodeMode>::get_enum_values();
     def->enum_values.emplace_back("stock");
     def->enum_values.emplace_back("clay_native");

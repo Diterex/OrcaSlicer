@@ -165,6 +165,15 @@ enum class ClayStartGCodeMode
     ClayNative,
 };
 
+// LDM reservoir feed: a pneumatic ram feeds the auger by pressure alone (only
+// the auger is G-code-driven); a mechanical ram is a second motor, typically
+// run as a Marlin mixing extruder (M163/M164 with a fixed mix factor).
+enum class LDMFeedType
+{
+    PneumaticRam,
+    MechanicalRam,
+};
+
 enum class SlicingMode
 {
     // Regular, applying ClipperLib::pftNonZero rule when creating ExPolygons.
@@ -561,6 +570,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(InputShaperType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(DraftShield)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ClayStartGCodeMode)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(LDMFeedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForwardCompatibilitySubstitutionRule)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeThumbnailsFormat)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
@@ -1416,7 +1426,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,              retraction_speed))
     ((ConfigOptionString,              file_start_gcode))
     ((ConfigOptionString,              machine_start_gcode))
-    ((ConfigOptionEnum<ClayStartGCodeMode>, clay_start_gcode_mode))
+    ((ConfigOptionEnum<ClayStartGCodeMode>, ldm_start_gcode_mode))
     ((ConfigOptionStrings,             filament_start_gcode))
     ((ConfigOptionBool,                single_extruder_multi_material))
     ((ConfigOptionBool,                manual_filament_change))
@@ -1582,13 +1592,18 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             nozzle_diameter))
     ((ConfigOptionBool,               reduce_infill_retraction))
     ((ConfigOptionBool,               ooze_prevention))
-    ((ConfigOptionBool,               clay_printer))
-    ((ConfigOptionFloat,              clay_nominal_bead_width_mm))
-    ((ConfigOptionFloat,              clay_nominal_layer_height_mm))
-    ((ConfigOptionFloat,              clay_max_unsupported_step_mm))
-    ((ConfigOptionBool,               clay_continuous_path_required))
-    ((ConfigOptionBool,               clay_disable_retracts))
-    ((ConfigOptionBool,               clay_disable_z_hop))
+    ((ConfigOptionBool,               ldm_modded_printer))
+    ((ConfigOptionEnum<LDMFeedType>,  ldm_feed_type))
+    ((ConfigOptionFloat,              ldm_ram_mix_factor))
+    ((ConfigOptionFloat,              ldm_reservoir_volume_ml))
+    ((ConfigOptionFloat,              ldm_tip_cone_angle))
+    ((ConfigOptionFloat,              ldm_tip_cone_length))
+    ((ConfigOptionFloat,              ldm_nominal_bead_width_mm))
+    ((ConfigOptionFloat,              ldm_nominal_layer_height_mm))
+    ((ConfigOptionFloat,              ldm_max_unsupported_step_mm))
+    ((ConfigOptionBool,               ldm_continuous_path_required))
+    ((ConfigOptionBool,               ldm_disable_retracts))
+    ((ConfigOptionBool,               ldm_disable_z_hop))
     ((ConfigOptionString,             filename_format))
     ((ConfigOptionStrings,            post_process))
     ((ConfigOptionString,             printer_model))

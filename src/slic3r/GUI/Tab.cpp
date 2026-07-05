@@ -3020,15 +3020,15 @@ void TabPrint::build()
         optgroup->append_single_option_line("timelapse_type", "others_settings_special_mode#timelapse");
         optgroup->append_single_option_line("enable_wrapping_detection");
 
-        // Clay fork: Clay Vase Plus analysis settings. Doc links point at the
+        // Clay fork: LDM Vase Plus analysis settings. Doc links point at the
         // fork-hosted manual (absolute URLs pass through OptionsGroup::get_url).
-        optgroup = page->new_optgroup(L("Clay Vase Plus"), L"param_special");
-        optgroup->append_single_option_line("clay_nominal_bead_width_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-nominal-bead-width");
-        optgroup->append_single_option_line("clay_nominal_layer_height_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-nominal-layer-height");
-        optgroup->append_single_option_line("clay_max_unsupported_step_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-max-unsupported-step");
-        optgroup->append_single_option_line("clay_continuous_path_required", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-continuous-path-required");
-        optgroup->append_single_option_line("clay_disable_retracts", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#prefer-no-retracts");
-        optgroup->append_single_option_line("clay_disable_z_hop", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#prefer-no-z-hop");
+        optgroup = page->new_optgroup(L("LDM Vase Plus"), L"param_special");
+        optgroup->append_single_option_line("ldm_nominal_bead_width_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-nominal-bead-width");
+        optgroup->append_single_option_line("ldm_nominal_layer_height_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-nominal-layer-height");
+        optgroup->append_single_option_line("ldm_max_unsupported_step_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-max-unsupported-step");
+        optgroup->append_single_option_line("ldm_continuous_path_required", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#require-continuous-ldm-path");
+        optgroup->append_single_option_line("ldm_disable_retracts", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#prefer-no-retracts");
+        optgroup->append_single_option_line("ldm_disable_z_hop", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#prefer-no-z-hop");
 
         optgroup = page->new_optgroup(L("Fuzzy skin"), L"fuzzy_skin");
         optgroup->append_single_option_line("fuzzy_skin", "others_settings_fuzzy_skin");
@@ -4860,8 +4860,13 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("printer_structure", "printer_basic_information_advanced#printer-structure");
         optgroup->append_single_option_line("gcode_flavor", "printer_basic_information_advanced#g-code-flavor");
         optgroup->append_single_option_line("pellet_modded_printer", "printer_basic_information_advanced#pellet-modded-printer");
-        // Clay fork: clay is a machine identity, like pellet modding.
-        optgroup->append_single_option_line("clay_printer", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay--ldm-printer");
+        // Clay fork: LDM is a machine identity, like pellet modding.
+        optgroup->append_single_option_line("ldm_modded_printer", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-modded-printer");
+        optgroup->append_single_option_line("ldm_feed_type", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-reservoir-feed");
+        optgroup->append_single_option_line("ldm_ram_mix_factor", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-ram-mix-factor");
+        optgroup->append_single_option_line("ldm_reservoir_volume_ml", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-reservoir-volume");
+        optgroup->append_single_option_line("ldm_tip_cone_angle", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-tip-cone-angle");
+        optgroup->append_single_option_line("ldm_tip_cone_length", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-tip-cone-length");
         optgroup->append_single_option_line("bbl_use_printhost", "printer_basic_information_advanced#use-3rd-party-print-host");
         optgroup->append_single_option_line("use_3mf");
         optgroup->append_single_option_line("scan_first_layer" , "printer_basic_information_advanced#scan-first-layer");
@@ -4970,7 +4975,7 @@ void TabPrinter::build_fff()
         option.opt.height = gcode_field_height;//150;
         optgroup->append_single_option_line(option, "printer_machine_gcode#machine-start-g-code");
         // Clay fork: clay-native startup sanitizing lives with the start G-code.
-        optgroup->append_single_option_line("clay_start_gcode_mode", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-start-g-code-mode");
+        optgroup->append_single_option_line("ldm_start_gcode_mode", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-start-g-code-mode");
 
         optgroup = page->new_optgroup(L("Machine end G-code"), L"param_gcode", 0);
         optgroup->m_on_change = [this, &optgroup_title = optgroup->title](const t_config_option_key& opt_key, const boost::any& value) {

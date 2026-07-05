@@ -85,7 +85,7 @@ static std::string lowercase_copy(std::string value)
 // mirroring pellet_modded_printer rather than a per-process mode.
 static bool clay_mode_active(const PrintConfig &config)
 {
-    return config.clay_printer.value;
+    return config.ldm_modded_printer.value;
 }
 
 // Expects an already-lowercased line.
@@ -245,7 +245,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "preheat_time",
         "preheat_steps",
         "machine_start_gcode",
-        "clay_start_gcode_mode",
+        "ldm_start_gcode_mode",
         "filament_start_gcode",
         "change_filament_gcode",
         "wipe",
@@ -296,13 +296,18 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "process_notes",
         "printer_notes",
         "use_3mf",
-        "clay_printer",
-        "clay_nominal_bead_width_mm",
-        "clay_nominal_layer_height_mm",
-        "clay_max_unsupported_step_mm",
-        "clay_continuous_path_required",
-        "clay_disable_retracts",
-        "clay_disable_z_hop"
+        "ldm_modded_printer",
+        "ldm_nominal_bead_width_mm",
+        "ldm_nominal_layer_height_mm",
+        "ldm_max_unsupported_step_mm",
+        "ldm_continuous_path_required",
+        "ldm_disable_retracts",
+        "ldm_disable_z_hop",
+        "ldm_feed_type",
+        "ldm_ram_mix_factor",
+        "ldm_reservoir_volume_ml",
+        "ldm_tip_cone_angle",
+        "ldm_tip_cone_length"
     };
 
     static std::unordered_set<std::string> steps_ignore;
@@ -1324,8 +1329,8 @@ StringObjectException Print::check_multi_filament_valid(const Print& print)
 void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *warnings) const
 {
     ClayVasePlusAnalysisResult analysis;
-    analysis.metric_snapshot.nominal_bead_width_mm = m_config.clay_nominal_bead_width_mm.value;
-    analysis.metric_snapshot.nominal_layer_height_mm = m_config.clay_nominal_layer_height_mm.value;
+    analysis.metric_snapshot.nominal_bead_width_mm = m_config.ldm_nominal_bead_width_mm.value;
+    analysis.metric_snapshot.nominal_layer_height_mm = m_config.ldm_nominal_layer_height_mm.value;
 
     if (!clay_mode_active(m_config)) {
         m_clay_vase_plus_analysis = std::move(analysis);
@@ -1349,8 +1354,8 @@ void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *w
 
     // Only nag about spiral vase when the process declares it expects one
     // continuous path (non-vase clay workflows are legitimate on a clay printer).
-    if (!m_config.spiral_mode.value && m_config.clay_continuous_path_required.value) {
-        add_warning("CVP_SPIRAL_MODE_REQUIRED", "medium", "mode",
+    if (!m_config.spiral_mode.value && m_config.ldm_continuous_path_required.value) {
+        add_warning("LVP_SPIRAL_MODE_REQUIRED", "medium", "mode",
             L("This process expects a continuous clay path but Spiral vase is off; enable Spiral vase or clear the continuous-path requirement."),
             "spiral_mode=false", "spiral_mode");
         analysis.overall_risk_level = "high_risk";
@@ -1364,18 +1369,18 @@ void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *w
     analysis.metric_snapshot.max_z_hop_mm =
         m_config.z_hop.values.empty() ? 0.0 : *std::max_element(m_config.z_hop.values.begin(), m_config.z_hop.values.end());
 
-    if (m_config.clay_disable_retracts.value && analysis.metric_snapshot.max_retraction_length_mm > EPSILON) {
-        add_warning("CVP_RETRACT_BURDEN_HIGH", "high", "restart",
-            L("Clay Vase Plus detected active retraction settings. Wet-clay flow is usually more stable with retracts disabled."),
+    if (m_config.ldm_disable_retracts.value && analysis.metric_snapshot.max_retraction_length_mm > EPSILON) {
+        add_warning("LVP_RETRACT_BURDEN_HIGH", "high", "restart",
+            L("LDM Vase Plus detected active retraction settings. Wet-clay flow is usually more stable with retracts disabled."),
             "max_retraction_length_mm=" + Slic3r::format("%.4f", analysis.metric_snapshot.max_retraction_length_mm), "retraction_length");
         analysis.base_rescue_complexity.has_restart_heavy_transition = true;
         analysis.base_rescue_complexity.level = "medium";
         analysis.overall_risk_level = "high_risk";
     }
 
-    if (m_config.clay_disable_z_hop.value && analysis.metric_snapshot.max_z_hop_mm > EPSILON) {
-        add_warning("CVP_ZHOP_WARNING", "medium", "travel",
-            L("Clay Vase Plus detected active Z-hop. Wet clay usually benefits from direct continuous deposition without lift events."),
+    if (m_config.ldm_disable_z_hop.value && analysis.metric_snapshot.max_z_hop_mm > EPSILON) {
+        add_warning("LVP_ZHOP_WARNING", "medium", "travel",
+            L("LDM Vase Plus detected active Z-hop. Wet clay usually benefits from direct continuous deposition without lift events."),
             "max_z_hop_mm=" + Slic3r::format("%.4f", analysis.metric_snapshot.max_z_hop_mm), "z_hop");
         if (analysis.overall_risk_level != "high_risk")
             analysis.overall_risk_level = "guarded";
@@ -1391,16 +1396,16 @@ void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *w
     }
 
     if (analysis.startup_compatibility.startup_retract_risk) {
-        add_warning("CVP_STARTUP_RETRACT_WARNING", "high", "startup",
-            L("Clay Vase Plus found a retract-like line in the start G-code. Startup retracts are usually hostile to wet-clay pressure continuity."),
+        add_warning("LVP_STARTUP_RETRACT_WARNING", "high", "startup",
+            L("LDM Vase Plus found a retract-like line in the start G-code. Startup retracts are usually hostile to wet-clay pressure continuity."),
             "machine_start_gcode contains retract-like motion", "machine_start_gcode");
         analysis.startup_compatibility.status = "warning";
         analysis.overall_risk_level = "high_risk";
     }
 
     if (analysis.startup_compatibility.purge_like_start_detected) {
-        add_warning("CVP_STARTUP_PURGE_WARNING", "medium", "startup",
-            L("Clay Vase Plus found a purge-like line in the start G-code. Consider clay-native startup to avoid filament-style priming motions."),
+        add_warning("LVP_STARTUP_PURGE_WARNING", "medium", "startup",
+            L("LDM Vase Plus found a purge-like line in the start G-code. Consider clay-native startup to avoid filament-style priming motions."),
             "machine_start_gcode contains purge-like motion", "machine_start_gcode");
         if (analysis.startup_compatibility.status == "compatible")
             analysis.startup_compatibility.status = "warning";
@@ -1409,7 +1414,7 @@ void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *w
     m_clay_vase_plus_analysis = std::move(analysis);
 }
 
-// Clay Vase Plus Track B1: extract body continuity signals from the generated
+// LDM Vase Plus Track B1: extract body continuity signals from the generated
 // wall structure. Reads LayerRegion::perimeters / thin_fills only; no slicing
 // behavior changes. Fills body_fragmentation_zone, base_rescue_complexity and
 // risk_distribution_mode of the analysis result created by validate().
@@ -1442,7 +1447,7 @@ void Print::update_clay_body_continuity_analysis() const
         // FFF gap fill (tiny corner gaps at any nozzle scale) is benign; the
         // clay-hostile rescue signature is gap fill at a small fraction of
         // the clay bead (0.66 mm against a 4.62 mm bead in the Julia+MOP
-        // case study). Without a declared clay_nominal_bead_width_mm the
+        // case study). Without a declared ldm_nominal_bead_width_mm the
         // metric cannot be judged and stays off.
         int    narrow_gap_fills { 0 };
     };
@@ -1485,7 +1490,7 @@ void Print::update_clay_body_continuity_analysis() const
     for (const Layer *layer : object->layers()) {
         LayerRoleStats stats;
         stats.z = layer->print_z;
-        const double clay_bead = m_config.clay_nominal_bead_width_mm.value;
+        const double clay_bead = m_config.ldm_nominal_bead_width_mm.value;
         const float  narrow_width = clay_bead > EPSILON ? float(0.35 * clay_bead) : 0.f;
         for (const LayerRegion *layerm : layer->regions()) {
             walk(&layerm->perimeters, stats);
@@ -1578,16 +1583,16 @@ void Print::update_clay_body_continuity_analysis() const
 
     if (zone.detected) {
         analysis.overall_risk_level = "high_risk";
-        analysis.warnings.push_back({"CVP_WALL_FRAGMENTATION_HIGH", "high", "continuity",
-            L("Clay Vase Plus found a sustained body region with fragmented wall roles; continuous clay deposition is at risk there."),
+        analysis.warnings.push_back({"LVP_WALL_FRAGMENTATION_HIGH", "high", "continuity",
+            L("LDM Vase Plus found a sustained body region with fragmented wall roles; continuous clay deposition is at risk there."),
             Slic3r::format("zone_z=%.2f-%.2f, peak_outer=%d, peak_overhang=%d",
                 zone.z_start_mm, zone.z_end_mm, zone.peak_outer_wall_sections, zone.peak_overhang_wall_sections),
             zone.z_start_mm});
     }
     if (base_concentrated) {
         analysis.overall_risk_level = "high_risk";
-        analysis.warnings.push_back({"CVP_NARROW_GAP_MEDIUM", "medium", "base_rescue",
-            L("Clay Vase Plus found gap-fill rescue structure in the base region; narrow rescue features are usually filament-oriented and clay-hostile."),
+        analysis.warnings.push_back({"LVP_NARROW_GAP_MEDIUM", "medium", "base_rescue",
+            L("LDM Vase Plus found gap-fill rescue structure in the base region; narrow rescue features are usually filament-oriented and clay-hostile."),
             Slic3r::format("base_gap_fill_entities=%d", base_gap_fills),
             base_worst_z});
     }
@@ -1600,8 +1605,8 @@ void Print::update_clay_body_continuity_analysis() const
     constexpr double clay_theta_max_deg = 40.0; // process envelope; Track D calibrates
     constexpr double clay_safety_frac   = 0.10;
     constexpr double clay_dz_budget_frac = 0.35; // slump budget v1, fraction of layer height
-    const double a_max_override = m_config.clay_max_unsupported_step_mm.value;
-    const double bead           = m_config.clay_nominal_bead_width_mm.value;
+    const double a_max_override = m_config.ldm_max_unsupported_step_mm.value;
+    const double bead           = m_config.ldm_nominal_bead_width_mm.value;
     const double sample_step    = std::max(bead > EPSILON ? 0.5 * bead : 1.0, 1.0);
     const double tan_theta      = std::tan(clay_theta_max_deg * PI / 180.0);
 
@@ -1718,15 +1723,42 @@ void Print::update_clay_body_continuity_analysis() const
         summary.worst_margin_mm = worst_margin == std::numeric_limits<double>::max() ? 0.0 : worst_margin;
         if (any_failing) {
             analysis.overall_risk_level = "high_risk";
-            analysis.warnings.push_back({"CVP_SUPPORT_MARGIN_FAILING", "high", "support_margin",
-                L("Clay Vase Plus measured an unsupported outward step beyond the process envelope; the wall is expected to sag or fail there."),
+            analysis.warnings.push_back({"LVP_SUPPORT_MARGIN_FAILING", "high", "support_margin",
+                L("LDM Vase Plus measured an unsupported outward step beyond the process envelope; the wall is expected to sag or fail there."),
                 Slic3r::format("worst_margin_mm=%.3f at z=%.2f", summary.worst_margin_mm, worst_z),
                 worst_z});
         } else if (any_marginal) {
-            analysis.warnings.push_back({"CVP_SUPPORT_MARGIN_MARGINAL", "medium", "support_margin",
-                L("Clay Vase Plus measured an unsupported outward step close to the process envelope; consider slowing down or reducing the overhang."),
+            analysis.warnings.push_back({"LVP_SUPPORT_MARGIN_MARGINAL", "medium", "support_margin",
+                L("LDM Vase Plus measured an unsupported outward step close to the process envelope; consider slowing down or reducing the overhang."),
                 Slic3r::format("worst_margin_mm=%.3f at z=%.2f", summary.worst_margin_mm, worst_z),
                 worst_z});
+        }
+    }
+
+    // ---- Reservoir capacity check ----
+    // Cumulative extruded volume per layer (perimeters + fills; thin_fills are
+    // copied into fills during infill generation, so counting both would
+    // double-count). Skirt/brim and support are not included - the estimate is
+    // slightly optimistic, which errs toward warning early enough.
+    const double reservoir_ml = m_config.ldm_reservoir_volume_ml.value;
+    if (reservoir_ml > EPSILON) {
+        const double capacity_mm3 = reservoir_ml * 1000.0;
+        double cumulative_mm3 = 0.0;
+        double runs_dry_z = -1.0;
+        for (const Layer *layer : object_layers) {
+            for (const LayerRegion *layerm : layer->regions())
+                cumulative_mm3 += layerm->perimeters.total_volume() + layerm->fills.total_volume();
+            if (runs_dry_z < 0. && cumulative_mm3 > capacity_mm3)
+                runs_dry_z = layer->print_z;
+        }
+        if (runs_dry_z >= 0.) {
+            analysis.warnings.push_back({"LVP_RESERVOIR_REFILL", "high", "reservoir",
+                L("This print needs more material than the reservoir holds; plan a refill before the indicated height."),
+                Slic3r::format("print_volume_ml=%.0f, reservoir_ml=%.0f, runs_dry_at_z=%.1f",
+                    cumulative_mm3 / 1000.0, reservoir_ml, runs_dry_z),
+                runs_dry_z});
+            if (analysis.overall_risk_level != "high_risk")
+                analysis.overall_risk_level = "guarded";
         }
     }
 }

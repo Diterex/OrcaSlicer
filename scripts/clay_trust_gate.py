@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clay Vase Plus trust gate: slice the corpus, classify, assert.
+"""LDM Vase Plus trust gate: slice the corpus, classify, assert.
 
 The unified roadmap's trust gate requires the analysis vocabulary to match
 the three case studies before any path-changing code ships:
@@ -132,7 +132,7 @@ def main() -> int:
         expected_analysis = case.get("analysis")
         if expected_analysis is None or args.pre_sliced is not None:
             continue
-        sidecar = gcode.with_name(gcode.name + ".clay-analysis.json")
+        sidecar = gcode.with_name(gcode.name + ".ldm-analysis.json")
         if not sidecar.exists():
             failures.append(name + ":sidecar-missing")
             print(f"    {name}: analysis sidecar MISSING at {sidecar}")

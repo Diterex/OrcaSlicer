@@ -338,12 +338,12 @@ TEST_CASE("Print::validate tolerates a null warnings pointer", "[Print][validate
     CHECK(err.string.empty());
 }
 
-TEST_CASE("Print::validate records Clay Vase Plus startup and motion warnings", "[Print][validate][ClayVasePlus]")
+TEST_CASE("Print::validate records LDM Vase Plus startup and motion warnings", "[Print][validate][ClayVasePlus]")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
-    config.set_key_value("clay_printer", new ConfigOptionBool(true));
-    config.set_key_value("clay_disable_retracts", new ConfigOptionBool(true));
-    config.set_key_value("clay_disable_z_hop", new ConfigOptionBool(true));
+    config.set_key_value("ldm_modded_printer", new ConfigOptionBool(true));
+    config.set_key_value("ldm_disable_retracts", new ConfigOptionBool(true));
+    config.set_key_value("ldm_disable_z_hop", new ConfigOptionBool(true));
     config.set_key_value("retraction_length", new ConfigOptionFloats{ 1.5 });
     config.set_key_value("z_hop", new ConfigOptionFloats{ 0.8 });
     config.set_key_value("machine_start_gcode", new ConfigOptionString("G28\nG1 E-1.25 F300\nG1 X97.123 Y4.5 E6.75 F812\n"));
@@ -371,12 +371,12 @@ TEST_CASE("Print::validate records Clay Vase Plus startup and motion warnings", 
     CHECK(analysis.warnings.size() >= 4);
 }
 
-TEST_CASE("Clay Vase Plus body continuity classifies a plain cube as clean control", "[Print][ClayVasePlus]")
+TEST_CASE("LDM Vase Plus body continuity classifies a plain cube as clean control", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_printer", true }
+        { "ldm_modded_printer", true }
     });
     print.process();
 
@@ -386,7 +386,7 @@ TEST_CASE("Clay Vase Plus body continuity classifies a plain cube as clean contr
     CHECK_FALSE(analysis.body_fragmentation_zone.detected);
 }
 
-TEST_CASE("Clay Vase Plus body continuity does not false-flag a gapless cube", "[Print][ClayVasePlus]")
+TEST_CASE("LDM Vase Plus body continuity does not false-flag a gapless cube", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
@@ -396,8 +396,8 @@ TEST_CASE("Clay Vase Plus body continuity does not false-flag a gapless cube", "
     // classification. (The positive path for base rescue is covered by the
     // julia_mop_clay case in the CI trust gate, which slices real geometry.)
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_printer", true },
-        { "clay_nominal_bead_width_mm", 4.62 }
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 }
     });
     std::vector<StringObjectException> warnings;
     print.validate(&warnings); // sets config-level base_rescue state
@@ -410,12 +410,12 @@ TEST_CASE("Clay Vase Plus body continuity does not false-flag a gapless cube", "
     CHECK(analysis.risk_distribution_mode == "clean_control");
 }
 
-TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphere", "[Print][ClayVasePlus]")
+TEST_CASE("LDM Vase Plus body continuity detects a fragmentation zone on a sphere", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
-        { "clay_printer", true }
+        { "ldm_modded_printer", true }
     });
     print.process();
 
@@ -429,12 +429,12 @@ TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphe
     CHECK(analysis.overall_risk_level == "high_risk");
 }
 
-TEST_CASE("Clay Vase Plus support margin: vertical walls are safe", "[Print][ClayVasePlus][SupportMargin]")
+TEST_CASE("LDM Vase Plus support margin: vertical walls are safe", "[Print][ClayVasePlus][SupportMargin]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_printer", true }
+        { "ldm_modded_printer", true }
     });
     print.process();
 
@@ -444,12 +444,12 @@ TEST_CASE("Clay Vase Plus support margin: vertical walls are safe", "[Print][Cla
     CHECK(analysis.support_margin_summary.worst_margin_mm > 0.0);
 }
 
-TEST_CASE("Clay Vase Plus support margin: a 45 degree wall fails the 40 degree envelope", "[Print][ClayVasePlus][SupportMargin]")
+TEST_CASE("LDM Vase Plus support margin: a 45 degree wall fails the 40 degree envelope", "[Print][ClayVasePlus][SupportMargin]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
-        { "clay_printer", true }
+        { "ldm_modded_printer", true }
     });
     print.process();
 
@@ -460,14 +460,14 @@ TEST_CASE("Clay Vase Plus support margin: a 45 degree wall fails the 40 degree e
     CHECK(analysis.support_margin_summary.first_warning_z_mm > 0.0);
 }
 
-TEST_CASE("Clay Vase Plus support margin: explicit step override wins", "[Print][ClayVasePlus][SupportMargin]")
+TEST_CASE("LDM Vase Plus support margin: explicit step override wins", "[Print][ClayVasePlus][SupportMargin]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
     // 5 mm admissible step makes the 45 degree chamfer trivially safe.
     Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
-        { "clay_printer", true },
-        { "clay_max_unsupported_step_mm", 5.0 }
+        { "ldm_modded_printer", true },
+        { "ldm_max_unsupported_step_mm", 5.0 }
     });
     print.process();
 
@@ -476,7 +476,27 @@ TEST_CASE("Clay Vase Plus support margin: explicit step override wins", "[Print]
     CHECK(analysis.support_margin_summary.status == "safe");
 }
 
-TEST_CASE("Clay Vase Plus body continuity stays inert when clay mode is off", "[Print][ClayVasePlus]")
+TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exceeded", "[Print][ClayVasePlus][Reservoir]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // A 20mm cube extrudes far more than 1 ml; the check must fire and
+    // report the height where the reservoir runs dry.
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_reservoir_volume_ml", 1.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LVP_RESERVOIR_REFILL"; });
+    REQUIRE(refill != analysis.warnings.end());
+    CHECK(refill->z_hint_mm > 0.0);
+    CHECK(refill->z_hint_mm <= 20.0);
+}
+
+TEST_CASE("LDM Vase Plus body continuity stays inert when clay mode is off", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
