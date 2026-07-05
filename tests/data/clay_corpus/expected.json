@@ -7,7 +7,8 @@
     "analysis": { "risk_distribution_mode": "clean_control", "support_margin_status": "safe" } },
   { "name": "julia_clay",        "model": "julia_heatwave_baseline_clay.3mf", "expected": "body_spread",
     "analysis": { "risk_distribution_mode": "body_spread", "support_margin_status": "failing",
-                  "worst_advance_min_mm": 2.0, "worst_advance_max_mm": 8.0 } },
+                  "worst_advance_min_mm": 4.9, "worst_advance_max_mm": 6.1 } },
   { "name": "julia_mop_clay",    "model": "julia_heatwave_mop_clay.3mf",      "expected": "base_concentrated",
-    "analysis": { "risk_distribution_mode": "base_concentrated" } }
+    "analysis": { "risk_distribution_mode": "base_concentrated", "support_margin_status": "failing",
+                  "worst_advance_min_mm": 8.0, "worst_advance_max_mm": 12.5 } }
 ]

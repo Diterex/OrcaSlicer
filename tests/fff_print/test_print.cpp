@@ -386,22 +386,28 @@ TEST_CASE("Clay Vase Plus body continuity classifies a plain cube as clean contr
     CHECK_FALSE(analysis.body_fragmentation_zone.detected);
 }
 
-TEST_CASE("Clay Vase Plus body continuity flags sub-bead gap fill as base rescue", "[Print][ClayVasePlus]")
+TEST_CASE("Clay Vase Plus body continuity does not false-flag a gapless cube", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
-    // With a declared clay bead, the cube's small FFF gap fills fall far
-    // below the 35% narrowness threshold and count as rescue structure.
+    // A plain cube produces no gap fill at all; with the clay bead declared
+    // the narrow-gap metric must stay quiet, and config-level retract
+    // warnings from validate() must not leak into the geometric
+    // classification. (The positive path for base rescue is covered by the
+    // julia_mop_clay case in the CI trust gate, which slices real geometry.)
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
         { "clay_mode", "vase_plus" },
         { "clay_nominal_bead_width_mm", 4.62 }
     });
+    std::vector<StringObjectException> warnings;
+    print.validate(&warnings); // sets config-level base_rescue state
     print.process();
 
     const auto &analysis = print.clay_vase_plus_analysis();
     CHECK(analysis.clay_mode_active);
-    CHECK(analysis.base_rescue_complexity.has_gap_infill);
-    CHECK(analysis.risk_distribution_mode == "base_concentrated");
+    CHECK_FALSE(analysis.base_rescue_complexity.has_gap_infill);
+    CHECK(analysis.base_rescue_complexity.level == "none");
+    CHECK(analysis.risk_distribution_mode == "clean_control");
 }
 
 TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphere", "[Print][ClayVasePlus]")

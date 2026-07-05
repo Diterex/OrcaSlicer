@@ -1517,12 +1517,17 @@ void Print::update_clay_body_continuity_analysis() const
     }
     analysis.base_rescue_complexity.has_gap_infill = base_gap_fills > 0;
     analysis.base_rescue_complexity.highest_risk_z_mm = base_worst_z;
-    if (base_gap_fills >= 15)
+    // Geometric evidence owns the level here (validate() may have set a
+    // config-level value from retract settings; that must not leak into the
+    // geometric risk_distribution_mode classification below). With a declared
+    // clay bead, ANY sub-35%-bead extrusion is physically unprintable in
+    // clay, so a single narrow rescue path already flags the base.
+    if (base_gap_fills >= 8)
         analysis.base_rescue_complexity.level = "high";
-    else if (base_gap_fills >= 5)
-        analysis.base_rescue_complexity.level = "medium";
     else if (base_gap_fills > 0)
-        analysis.base_rescue_complexity.level = "guarded";
+        analysis.base_rescue_complexity.level = "medium";
+    else
+        analysis.base_rescue_complexity.level = "none";
 
     // Body fragmentation zone (metric M6): first sustained run (>= 3
     // consecutive body layers) of mixed wall roles.
@@ -1550,8 +1555,8 @@ void Print::update_clay_body_continuity_analysis() const
         }
     }
 
-    // Risk distribution mode (metric M8).
-    const bool base_concentrated = analysis.base_rescue_complexity.level == "medium" || analysis.base_rescue_complexity.level == "high";
+    // Risk distribution mode (metric M8) — from geometric evidence only.
+    const bool base_concentrated = base_gap_fills > 0;
     if (zone.detected && base_concentrated)
         analysis.risk_distribution_mode = "mixed";
     else if (zone.detected)
