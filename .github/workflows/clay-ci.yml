@@ -136,3 +136,39 @@ jobs:
           name: trust-gate-gcode
           path: /tmp/trust-gate/**/*.gcode
           if-no-files-found: ignore
+
+  publish_dev_build:
+    # Rolling release so the latest green Windows build has a stable
+    # browser-download URL (artifacts expire; gh CLI shouldn't be required).
+    name: Publish dev build
+    runs-on: ubuntu-latest
+    needs: [build_windows, unit_tests, trust_gate]
+    if: ${{ success() && github.event_name == 'push' }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github
+      - name: Download Windows portable
+        uses: actions/download-artifact@v8
+        with:
+          pattern: OrcaSlicer_Windows_*_portable
+          path: win-portable
+          merge-multiple: true
+      - name: Repack and publish
+        run: |
+          cd win-portable
+          zip -qr ../CeramicaSlicer_Windows_x64_ldm-dev_portable.zip .
+          cd ..
+          gh release view ldm-dev-latest --repo ${{ github.repository }} >/dev/null 2>&1 || \
+            gh release create ldm-dev-latest --repo ${{ github.repository }} --prerelease \
+              --title "LDM dev build (rolling)" \
+              --notes "Latest green build of the clay-vase-plus branch. Unzip and run orca-slicer.exe. Manual: doc/LDMVasePlus.md"
+          gh release upload ldm-dev-latest CeramicaSlicer_Windows_x64_ldm-dev_portable.zip \
+            --repo ${{ github.repository }} --clobber
+          gh release edit ldm-dev-latest --repo ${{ github.repository }} \
+            --notes "Latest green build of the clay-vase-plus branch (commit ${{ github.sha }}). Unzip and run orca-slicer.exe. Manual: https://github.com/${{ github.repository }}/blob/clay-vase-plus/doc/LDMVasePlus.md"
