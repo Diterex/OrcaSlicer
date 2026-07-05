@@ -81,9 +81,11 @@ static std::string lowercase_copy(std::string value)
     return value;
 }
 
+// Clay behavior is a machine identity (a clay printer never prints filament),
+// mirroring pellet_modded_printer rather than a per-process mode.
 static bool clay_mode_active(const PrintConfig &config)
 {
-    return config.clay_mode.value == ClayMode::VasePlus;
+    return config.clay_printer.value;
 }
 
 // Expects an already-lowercased line.
@@ -294,7 +296,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "process_notes",
         "printer_notes",
         "use_3mf",
-        "clay_mode",
+        "clay_printer",
         "clay_nominal_bead_width_mm",
         "clay_nominal_layer_height_mm",
         "clay_max_unsupported_step_mm",
@@ -1345,9 +1347,11 @@ void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *w
         }
     };
 
-    if (!m_config.spiral_mode.value) {
+    // Only nag about spiral vase when the process declares it expects one
+    // continuous path (non-vase clay workflows are legitimate on a clay printer).
+    if (!m_config.spiral_mode.value && m_config.clay_continuous_path_required.value) {
         add_warning("CVP_SPIRAL_MODE_REQUIRED", "medium", "mode",
-            L("Clay Vase Plus is intended for spiral vase workflows; enable Spiral vase for the current first-pass implementation."),
+            L("This process expects a continuous clay path but Spiral vase is off; enable Spiral vase or clear the continuous-path requirement."),
             "spiral_mode=false", "spiral_mode");
         analysis.overall_risk_level = "high_risk";
         analysis.risk_distribution_mode = "mixed";

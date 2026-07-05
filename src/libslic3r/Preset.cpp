@@ -1009,6 +1009,9 @@ static std::vector<std::string> s_Preset_print_options{
     "alternate_extra_wall",
     "slice_closing_radius",
     "spiral_mode",
+    // Clay fork: Clay Vase Plus analysis parameters.
+    "clay_nominal_bead_width_mm", "clay_nominal_layer_height_mm", "clay_max_unsupported_step_mm",
+    "clay_continuous_path_required", "clay_disable_retracts", "clay_disable_z_hop",
     "spiral_mode_smooth",
     "spiral_mode_max_xy_smoothing",
     "spiral_starting_flow_ratio",
@@ -1366,6 +1369,8 @@ static std::vector<std::string> s_Preset_machine_limits_options {
 
 static std::vector<std::string> s_Preset_printer_options {
     "printer_technology",
+    // Clay fork: machine identity + startup handling.
+    "clay_printer", "clay_start_gcode_mode",
     "printable_area", "extruder_printable_area", "support_parallel_printheads", "parallel_printheads_count", "parallel_printheads_bed_exclude_areas", "bed_exclude_area","bed_custom_texture", "bed_custom_model", "gcode_flavor",
     "fan_kickstart", "part_cooling_fan_min_pwm", "fan_speedup_time", "fan_speedup_overhangs",
     "single_extruder_multi_material", "manual_filament_change", "file_start_gcode", "machine_start_gcode", "machine_end_gcode", "before_layer_change_gcode", "printing_by_object_gcode", "layer_change_gcode", "time_lapse_gcode", "wrapping_detection_gcode", "change_filament_gcode", "change_extrusion_role_gcode",

@@ -17,26 +17,32 @@ verdicts against measured fixtures.
 
 ## Where to find the settings
 
-- **Process tab → Others page → "Clay Vase Plus" group** — all analysis
-  settings (listed below). Make sure the **Advanced** view toggle is on;
-  the clay options are advanced-mode settings.
+- **Printer tab → Basic information page → Advanced, right under
+  "Pellet Modded Printer"** — the master switch: *Clay / LDM printer*.
+- **Process tab → Others page → "Clay Vase Plus" group** — the analysis
+  parameters (listed below). Make sure the **Advanced** view toggle is
+  on; these are advanced-mode settings.
 - **Printer tab → Machine G-code page → below "Machine start G-code"** —
   *Clay start G-code mode*.
 
-Nothing needs a special profile: open any project, switch Clay mode to
-"Vase Plus", and slice. The reference clay projects in
-`tests/data/clay_corpus/*_clay.3mf` arrive preconfigured.
+Turn on *Clay / LDM printer* once on your printer preset and every print
+on that machine gets the clay analysis — no per-project setup. The
+reference clay projects in `tests/data/clay_corpus/*_clay.3mf` arrive
+preconfigured.
 
 ---
 
 ## Settings reference
 
-### Clay mode
+### Clay / LDM printer
 
-`clay_mode` — Off | Vase Plus (default Off)
+`clay_printer` — off | on (default off), **printer setting**
 
-Master switch. Off means the fork behaves exactly like stock OrcaSlicer.
-Vase Plus enables, at slicing time:
+The master switch, and deliberately a *printer* property rather than a
+per-print mode: a machine that prints wet clay never prints filament, so
+clay behavior is part of the machine's identity — exactly like the
+neighboring *Pellet Modded Printer* flag. When on, every print on this
+printer gets, at slicing time:
 
 1. **Config conflict warnings** — retraction, Z-hop, and non-spiral
    workflows that are usually hostile to wet clay.
@@ -61,6 +67,12 @@ Vase Plus enables, at slicing time:
 It does **not** modify toolpaths. Analysis earns trust before any
 correction ships; correction (locally tilted spiral layers) is the next
 phase of the roadmap.
+
+The spiral-vase reminder warning is controlled by the process-level
+*Require continuous clay path* setting, so non-vase clay workflows
+(solid clay parts, coasters, tiles) are first-class: clear that option
+in those process profiles and you keep all other clay analysis without
+spiral nagging.
 
 ### Clay nominal bead width
 
@@ -176,7 +188,9 @@ contract consumed by CI and by the upcoming correction engine.
 ## Everything changed vs stock OrcaSlicer (developer changelog)
 
 **Slicing engine (`src/libslic3r/`)**
-- `PrintConfig.{hpp,cpp}`: the eight `clay_*` settings above.
+- `PrintConfig.{hpp,cpp}`: the eight `clay_*` settings above
+  (`clay_printer` machine flag + seven process/machine parameters);
+  preset registration so they persist in printer and process presets.
 - `Print.{hpp,cpp}`: the Clay Vase Plus analysis pass — config conflict
   scan at validate time; body-continuity extraction (B1) and
   support-margin measurement (B2) at the end of slicing, reading the

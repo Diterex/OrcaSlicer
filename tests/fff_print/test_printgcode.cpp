@@ -285,7 +285,7 @@ TEST_CASE("Clay Vase Plus clay-native startup strips purge-like start lines", "[
         { "initial_layer_print_height", 0.2 },
         { "initial_layer_line_width",   0 },
         { "gcode_comments",             true },
-        { "clay_mode",                  "vase_plus" },
+        { "clay_printer",               true },
         { "clay_start_gcode_mode",      "clay_native" },
         { "machine_start_gcode",        "G28\nG1 E-1.25 F300\nG1 X97.123 Y4.5 E6.75 F812\nM117 clay\n" },
         { "z_hop",                      0 }
@@ -305,7 +305,7 @@ TEST_CASE("Clay Vase Plus writes an analysis sidecar next to exported G-code", "
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_mode", "vase_plus" }
+        { "clay_printer",               true }
     });
     print.set_status_silent();
     print.process();

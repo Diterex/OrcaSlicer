@@ -159,12 +159,6 @@ enum class PrintOrder
     Count,
 };
 
-enum class ClayMode
-{
-    Off,
-    VasePlus,
-};
-
 enum class ClayStartGCodeMode
 {
     Stock,
@@ -566,7 +560,6 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(InputShaperType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(DraftShield)
-CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ClayMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ClayStartGCodeMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForwardCompatibilitySubstitutionRule)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeThumbnailsFormat)
@@ -1589,7 +1582,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             nozzle_diameter))
     ((ConfigOptionBool,               reduce_infill_retraction))
     ((ConfigOptionBool,               ooze_prevention))
-    ((ConfigOptionEnum<ClayMode>,     clay_mode))
+    ((ConfigOptionBool,               clay_printer))
     ((ConfigOptionFloat,              clay_nominal_bead_width_mm))
     ((ConfigOptionFloat,              clay_nominal_layer_height_mm))
     ((ConfigOptionFloat,              clay_max_unsupported_step_mm))

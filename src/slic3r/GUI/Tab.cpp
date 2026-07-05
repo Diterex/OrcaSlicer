@@ -3023,7 +3023,6 @@ void TabPrint::build()
         // Clay fork: Clay Vase Plus analysis settings. Doc links point at the
         // fork-hosted manual (absolute URLs pass through OptionsGroup::get_url).
         optgroup = page->new_optgroup(L("Clay Vase Plus"), L"param_special");
-        optgroup->append_single_option_line("clay_mode", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-mode");
         optgroup->append_single_option_line("clay_nominal_bead_width_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-nominal-bead-width");
         optgroup->append_single_option_line("clay_nominal_layer_height_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-nominal-layer-height");
         optgroup->append_single_option_line("clay_max_unsupported_step_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-max-unsupported-step");
@@ -4861,6 +4860,8 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("printer_structure", "printer_basic_information_advanced#printer-structure");
         optgroup->append_single_option_line("gcode_flavor", "printer_basic_information_advanced#g-code-flavor");
         optgroup->append_single_option_line("pellet_modded_printer", "printer_basic_information_advanced#pellet-modded-printer");
+        // Clay fork: clay is a machine identity, like pellet modding.
+        optgroup->append_single_option_line("clay_printer", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay--ldm-printer");
         optgroup->append_single_option_line("bbl_use_printhost", "printer_basic_information_advanced#use-3rd-party-print-host");
         optgroup->append_single_option_line("use_3mf");
         optgroup->append_single_option_line("scan_first_layer" , "printer_basic_information_advanced#scan-first-layer");

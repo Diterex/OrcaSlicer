@@ -341,7 +341,7 @@ TEST_CASE("Print::validate tolerates a null warnings pointer", "[Print][validate
 TEST_CASE("Print::validate records Clay Vase Plus startup and motion warnings", "[Print][validate][ClayVasePlus]")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
-    config.set_key_value("clay_mode", new ConfigOptionEnum<ClayMode>(ClayMode::VasePlus));
+    config.set_key_value("clay_printer", new ConfigOptionBool(true));
     config.set_key_value("clay_disable_retracts", new ConfigOptionBool(true));
     config.set_key_value("clay_disable_z_hop", new ConfigOptionBool(true));
     config.set_key_value("retraction_length", new ConfigOptionFloats{ 1.5 });
@@ -376,7 +376,7 @@ TEST_CASE("Clay Vase Plus body continuity classifies a plain cube as clean contr
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_mode", "vase_plus" }
+        { "clay_printer", true }
     });
     print.process();
 
@@ -396,7 +396,7 @@ TEST_CASE("Clay Vase Plus body continuity does not false-flag a gapless cube", "
     // classification. (The positive path for base rescue is covered by the
     // julia_mop_clay case in the CI trust gate, which slices real geometry.)
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_mode", "vase_plus" },
+        { "clay_printer", true },
         { "clay_nominal_bead_width_mm", 4.62 }
     });
     std::vector<StringObjectException> warnings;
@@ -415,7 +415,7 @@ TEST_CASE("Clay Vase Plus body continuity detects a fragmentation zone on a sphe
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
-        { "clay_mode", "vase_plus" }
+        { "clay_printer", true }
     });
     print.process();
 
@@ -434,7 +434,7 @@ TEST_CASE("Clay Vase Plus support margin: vertical walls are safe", "[Print][Cla
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
-        { "clay_mode", "vase_plus" }
+        { "clay_printer", true }
     });
     print.process();
 
@@ -449,7 +449,7 @@ TEST_CASE("Clay Vase Plus support margin: a 45 degree wall fails the 40 degree e
     Slic3r::Print print;
     Slic3r::Model model;
     Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
-        { "clay_mode", "vase_plus" }
+        { "clay_printer", true }
     });
     print.process();
 
@@ -466,7 +466,7 @@ TEST_CASE("Clay Vase Plus support margin: explicit step override wins", "[Print]
     Slic3r::Model model;
     // 5 mm admissible step makes the 45 degree chamfer trivially safe.
     Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
-        { "clay_mode", "vase_plus" },
+        { "clay_printer", true },
         { "clay_max_unsupported_step_mm", 5.0 }
     });
     print.process();

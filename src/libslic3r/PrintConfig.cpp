@@ -301,11 +301,6 @@ static t_config_enum_values s_keys_map_PrintOrder{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrintOrder)
 
-static t_config_enum_values s_keys_map_ClayMode{
-    { "off",       int(ClayMode::Off) },
-    { "vase_plus", int(ClayMode::VasePlus) },
-};
-CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ClayMode)
 
 static t_config_enum_values s_keys_map_ClayStartGCodeMode{
     { "stock",       int(ClayStartGCodeMode::Stock) },
@@ -3909,6 +3904,15 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def          = this->add("clay_printer", coBool);
+    def->label   = L("Clay / LDM printer");
+    def->tooltip = L("Enable this option if this machine prints wet clay or another paste (LDM). "
+                     "Activates the Clay Vase Plus analysis for every print on this printer: "
+                     "clay-hostile setting warnings, wall continuity and support-margin analysis, "
+                     "and the clay analysis sidecar next to exported G-code.");
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("support_multi_bed_types", coBool);
     def->label = L("Support multi bed types");
     def->tooltip = L("Enable this option if you want to use multiple bed types.");
@@ -5910,18 +5914,6 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("This enables spiraling, which smooths out the Z moves of the outer contour and turns a solid model into a single walled print with solid bottom layers. The final generated model has no seam.");
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
-
-    def = this->add("clay_mode", coEnum);
-    def->label = L("Clay mode");
-    def->category = L("Process");
-    def->tooltip = L("Enable Clay Vase Plus warnings and startup handling for wet-clay spiral printing workflows.");
-    def->enum_keys_map = &ConfigOptionEnum<ClayMode>::get_enum_values();
-    def->enum_values.emplace_back("off");
-    def->enum_values.emplace_back("vase_plus");
-    def->enum_labels.emplace_back(L("Off"));
-    def->enum_labels.emplace_back(L("Vase Plus"));
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionEnum<ClayMode>(ClayMode::Off));
 
     def = this->add("clay_nominal_bead_width_mm", coFloat);
     def->label = L("Clay nominal bead width");
