@@ -1361,6 +1361,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionStrings,             volumetric_speed_coefficients))
     ((ConfigOptionInts,              filament_adhesiveness_category))
     ((ConfigOptionFloats,              filament_density))
+    ((ConfigOptionFloats,              ldm_wet_yield_strength))
+    ((ConfigOptionFloats,              ldm_e_modulus))
     ((ConfigOptionStrings,             filament_type))
     ((ConfigOptionBools,               filament_soluble))
     ((ConfigOptionStrings,             filament_ids))

@@ -189,6 +189,37 @@ families are planned once real measured dimensions are collected.)
 
 ---
 
+## Material settings (Filament tab → Basic information, under Density)
+
+### LDM wet yield strength
+
+`ldm_wet_yield_strength` — kPa (default 0 = screening off)
+
+Yield strength of the wet paste **as printed** (printable clay bodies are
+typically 4–20 kPa). Together with the material **Density** (the standard
+field above it — set your real wet-clay density, ≈1.8–2.0 g/cm³, not a
+filament placeholder) and the nominal bead width, this enables the
+**self-weight stability screening**: for every layer, the accumulated
+weight of everything above it is converted to wall stress and compared
+against what the wet material can carry (squash), and the overturning
+moment of off-center mass is checked against the wall's resisting moment
+(cantilever). The screening is deliberately **conservative — it gives no
+credit for drying/stiffening during the print**. Calibrate with the
+squash-cylinder print from the Track D session plan.
+
+### LDM wet elastic modulus
+
+`ldm_e_modulus` — kPa (default 0 = buckling screen off)
+
+Elastic modulus of the wet paste (typically 300–1000 kPa for printable
+clay). Adds the third failure mode to the screening: **shell buckling** —
+a slender wall bowing sideways well below the squash limit, the classic
+"it should have worked" collapse. Curved walls are stiffer (folds act as
+corrugation); the screen uses the flattest spans of each loop. Calibrate
+with a thin-wall tube printed to failure.
+
+---
+
 ## Process settings (Process tab → Others → LDM Vase Plus)
 
 ### LDM nominal bead width
@@ -279,6 +310,7 @@ continuity and leave witness marks in soft material.
 | `LVP_NARROW_GAP_MEDIUM` | Sub-bead rescue structure in the base region |
 | `LVP_SUPPORT_MARGIN_MARGINAL` / `LVP_SUPPORT_MARGIN_FAILING` | Outward step near / beyond the admissible envelope, with the worst Z |
 | `LVP_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
+| `LVP_STABILITY_SQUASH` / `LVP_STABILITY_BUCKLE` / `LVP_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
 
 ### The analysis sidecar
 
@@ -286,11 +318,12 @@ Exporting G-code with the LDM printer flag on writes
 `<gcode>.ldm-analysis.json`: `ldm_active`, overall risk level, risk
 distribution mode, the body fragmentation zone (Z range + peak section
 counts), base rescue complexity, startup compatibility, the support
-margin summary (status, first warning Z, worst margin in mm), the full
-warning list, and the per-loop support-margin field (`layer_idx, z_mm,
-a_max_mm, dz_budget_mm, worst_advance_mm, violating_fraction`). This is
-the machine-readable contract consumed by CI and by the upcoming
-correction engine.
+margin summary (status, first warning Z, worst margin in mm), the
+stability screen (evaluated flag, squash/buckle/cantilever utilization
+ratios, predicted mode, failing height), the full warning list, and the
+per-loop support-margin field (`layer_idx, z_mm, a_max_mm, dz_budget_mm,
+worst_advance_mm, violating_fraction`). This is the machine-readable
+contract consumed by CI and by the upcoming correction engine.
 
 ---
 
@@ -305,8 +338,10 @@ correction engine.
 - `Print.{hpp,cpp}`: the LDM Vase Plus analysis pass — config conflict
   scan at validate time; body-continuity and support-margin measurement
   at the end of slicing, reading generated perimeters only (no behavior
-  change); the reservoir capacity check; result structs including the
-  queryable per-loop support-margin field.
+  change); the reservoir capacity check; the conservative self-weight
+  stability screening (squash / shell-buckle / cantilever, Suiker/Wolfs
+  lineage, no drying credit); result structs including the queryable
+  per-loop support-margin field.
 - `GCode.cpp`: clay-native startup sanitizer; analysis sidecar JSON
   export.
 

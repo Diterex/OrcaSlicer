@@ -2923,6 +2923,28 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
 
+    def = this->add("ldm_wet_yield_strength", coFloats);
+    def->label = L("LDM wet yield strength");
+    def->tooltip = L("Yield strength of the wet paste as printed (printable clay bodies are typically 4-20 kPa). "
+                     "With density and bead width declared, enables the LDM self-weight stability screening: "
+                     "warns when the accumulated weight above a layer approaches what the wet material can carry. "
+                     "0 disables the screening. Calibrate with a squash-cylinder print.");
+    def->sidetext = L("kPa");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("ldm_e_modulus", coFloats);
+    def->label = L("LDM wet elastic modulus");
+    def->tooltip = L("Elastic modulus of the wet paste (printable clay bodies are typically 300-1000 kPa). "
+                     "Enables the shell-buckling part of the LDM stability screening: a slender wall can bow "
+                     "sideways well below the squash limit. 0 disables the buckling screen. "
+                     "Calibrate with a thin-wall tube printed to failure.");
+    def->sidetext = L("kPa");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
     def = this->add("filament_type", coStrings);
     def->label = L("Type");
     def->tooltip = L("Filament material type");

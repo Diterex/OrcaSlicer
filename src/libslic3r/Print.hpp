@@ -943,6 +943,20 @@ struct ClayVasePlusMetricSnapshot
     double nominal_layer_height_mm { 0.0 };
 };
 
+// B4 Tier-1: conservative self-weight stability screening (no strength-gain
+// time credit; Suiker/Wolfs-style). Evaluated only when the LDM material
+// properties (density, wet yield strength; E modulus for buckling) and the
+// nominal bead width are declared.
+struct ClayStabilityScreen
+{
+    bool        evaluated { false };
+    double      squash_ratio { 0.0 };      // wet-yield utilization, worst level
+    double      buckle_ratio { 0.0 };      // shell-buckling utilization, worst level
+    double      cantilever_ratio { 0.0 };  // overturning-moment utilization, worst level
+    std::string predicted_mode { "stable" }; // stable | squash | buckle | cantilever
+    double      failing_z_mm { -1.0 };
+};
+
 struct ClayVasePlusAnalysisResult
 {
     int                                  analysis_version { 1 };
@@ -957,6 +971,7 @@ struct ClayVasePlusAnalysisResult
     std::vector<ClayVasePlusWarning>     warnings;
     // B2 queryable field; empty unless clay mode is active and walls exist.
     std::vector<ClaySupportMarginLoop>   support_margin_field;
+    ClayStabilityScreen                  stability;
 };
 
 enum FilamentTempType {

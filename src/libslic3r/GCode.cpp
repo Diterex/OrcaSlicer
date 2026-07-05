@@ -340,6 +340,14 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 {"code", w.code}, {"severity", w.severity}, {"category", w.category},
                 {"message", w.message}, {"metric", w.metric}, {"z_hint_mm", w.z_hint_mm},
             });
+        j["stability"] = {
+            {"evaluated", a.stability.evaluated},
+            {"squash_ratio", a.stability.squash_ratio},
+            {"buckle_ratio", a.stability.buckle_ratio},
+            {"cantilever_ratio", a.stability.cantilever_ratio},
+            {"predicted_mode", a.stability.predicted_mode},
+            {"failing_z_mm", a.stability.failing_z_mm},
+        };
         j["support_margin_field"] = nlohmann::json::array();
         for (const ClaySupportMarginLoop &loop : a.support_margin_field)
             j["support_margin_field"].push_back({

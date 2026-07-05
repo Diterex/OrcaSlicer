@@ -4208,6 +4208,9 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_adhesiveness_category", "material_basic_information#adhesiveness-category");
 
         optgroup->append_single_option_line("filament_density", "material_basic_information#density");
+        // Clay fork: wet material properties for the LDM stability screening.
+        optgroup->append_single_option_line("ldm_wet_yield_strength", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-wet-yield-strength");
+        optgroup->append_single_option_line("ldm_e_modulus", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-wet-elastic-modulus");
         optgroup->append_single_option_line("filament_shrink", "material_basic_information#shrinkage-xy");
         optgroup->append_single_option_line("filament_shrinkage_compensation_z", "material_basic_information#shrinkage-z");
         optgroup->append_single_option_line("filament_cost", "material_basic_information#price");
@@ -5851,6 +5854,15 @@ void TabPrinter::toggle_options()
 
         const bool support_parallel_printheads = printer_cfg.opt_bool("support_parallel_printheads");
         toggle_line("parallel_printheads_count", support_parallel_printheads);
+
+        // Clay fork: LDM machine settings gray out until the LDM flag is on;
+        // the ram mix factor only applies to a mechanical ram (pellet-pattern
+        // conditional behavior).
+        const bool is_ldm_printer = m_config->opt_bool("ldm_modded_printer");
+        for (auto el : {"ldm_feed_type", "ldm_reservoir_volume_ml", "ldm_tip_cone_angle", "ldm_tip_cone_length", "ldm_tip_top_diameter"})
+            toggle_option(el, is_ldm_printer);
+        const bool is_mechanical_ram = m_config->option<ConfigOptionEnum<LDMFeedType>>("ldm_feed_type")->value == LDMFeedType::MechanicalRam;
+        toggle_option("ldm_ram_mix_factor", is_ldm_printer && is_mechanical_ram);
     }
     
 
@@ -5858,6 +5870,8 @@ void TabPrinter::toggle_options()
         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
         std::string   printer_type  = preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle);
         toggle_line("wrapping_detection_gcode", DevPrinterConfigUtil::support_wrapping_detection(printer_type));
+        // Clay fork: startup sanitizing only applies to an LDM machine.
+        toggle_option("ldm_start_gcode_mode", m_config->opt_bool("ldm_modded_printer"));
     }
 
     if (m_active_page->title() == L("Multimaterial")) {

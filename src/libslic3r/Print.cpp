@@ -308,7 +308,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "ldm_reservoir_volume_ml",
         "ldm_tip_cone_angle",
         "ldm_tip_cone_length",
-        "ldm_tip_top_diameter"
+        "ldm_tip_top_diameter",
+        "ldm_wet_yield_strength",
+        "ldm_e_modulus"
     };
 
     static std::unordered_set<std::string> steps_ignore;
@@ -1736,21 +1738,96 @@ void Print::update_clay_body_continuity_analysis() const
         }
     }
 
+    // ---- Shared per-layer geometry (reservoir + stability screening) ----
+    // Volumes: perimeters + fills; thin_fills are copied into fills during
+    // infill generation, so counting both would double-count. Skirt/brim and
+    // support are not included - slightly optimistic, errs toward warning
+    // early enough.
+    struct LdmLayerGeom {
+        double z { 0. };
+        double volume_mm3 { 0. };
+        double perim_m { 0. };
+        double r_mean_m { 0. };
+        double r_flat_m { 0. };
+        Vec2d  centroid_m { 0., 0. };
+        bool   has_wall { false };
+    };
+    std::vector<LdmLayerGeom> layer_geom;
+    layer_geom.reserve(object_layers.size());
+    for (const Layer *layer : object_layers) {
+        LdmLayerGeom geom;
+        geom.z = layer->print_z;
+        for (const LayerRegion *layerm : layer->regions())
+            geom.volume_mm3 += layerm->perimeters.total_volume() + layerm->fills.total_volume();
+        std::vector<Vec2d> wall = outer_wall_points_mm(layer);
+        if (wall.size() >= 8) {
+            geom.has_wall = true;
+            const size_t n = wall.size();
+            double perim_mm = 0.;
+            Vec2d  centroid_mm(0., 0.);
+            for (size_t k = 0; k < n; ++ k) {
+                const Vec2d &a = wall[k];
+                const Vec2d &b = wall[(k + 1) % n];
+                const double len = (b - a).norm();
+                perim_mm += len;
+                centroid_mm += 0.5 * (a + b) * len;
+            }
+            if (perim_mm > EPSILON)
+                centroid_mm /= perim_mm;
+            geom.perim_m = perim_mm * 1e-3;
+            geom.centroid_m = centroid_mm * 1e-3;
+            double r_sum = 0.;
+            for (const Vec2d &p : wall)
+                r_sum += (p - centroid_mm).norm();
+            geom.r_mean_m = (r_sum / double(n)) * 1e-3;
+            // Flattest 10% of spans drive shell buckling (folds are
+            // corrugation and stiffen): p90 of the local circumradius on a
+            // coarse resampling, capped at 4x the overall loop radius.
+            {
+                const int    grid_n = 128;
+                std::vector<Vec2d> rs(grid_n);
+                std::vector<double> arc(n + 1, 0.);
+                for (size_t k = 0; k < n; ++ k)
+                    arc[k + 1] = arc[k] + (wall[(k + 1) % n] - wall[k]).norm();
+                const double total = std::max(arc[n], 1e-9);
+                size_t seg = 0;
+                for (int s = 0; s < grid_n; ++ s) {
+                    const double target = total * s / grid_n;
+                    while (seg + 1 < n && arc[seg + 1] < target)
+                        ++ seg;
+                    const double seg_len = std::max(arc[seg + 1] - arc[seg], 1e-9);
+                    const double frac = std::clamp((target - arc[seg]) / seg_len, 0.0, 1.0);
+                    rs[s] = wall[seg] + frac * (wall[(seg + 1) % n] - wall[seg]);
+                }
+                std::vector<double> radii(grid_n);
+                const double cap_mm = 4.0 * geom.r_mean_m * 1e3;
+                for (int s = 0; s < grid_n; ++ s) {
+                    const Vec2d &a = rs[s];
+                    const Vec2d &b = rs[(s + 1) % grid_n];
+                    const Vec2d &c = rs[(s + 2) % grid_n];
+                    const double cross = std::abs((b - a).x() * (c - a).y() - (b - a).y() * (c - a).x());
+                    double radius = cap_mm;
+                    if (cross > 1e-9)
+                        radius = std::min(cap_mm, (b - a).norm() * (c - b).norm() * (a - c).norm() / (2.0 * cross));
+                    radii[s] = radius;
+                }
+                std::nth_element(radii.begin(), radii.begin() + (grid_n * 9) / 10, radii.end());
+                geom.r_flat_m = radii[(grid_n * 9) / 10] * 1e-3;
+            }
+        }
+        layer_geom.push_back(geom);
+    }
+
     // ---- Reservoir capacity check ----
-    // Cumulative extruded volume per layer (perimeters + fills; thin_fills are
-    // copied into fills during infill generation, so counting both would
-    // double-count). Skirt/brim and support are not included - the estimate is
-    // slightly optimistic, which errs toward warning early enough.
     const double reservoir_ml = m_config.ldm_reservoir_volume_ml.value;
     if (reservoir_ml > EPSILON) {
         const double capacity_mm3 = reservoir_ml * 1000.0;
         double cumulative_mm3 = 0.0;
         double runs_dry_z = -1.0;
-        for (const Layer *layer : object_layers) {
-            for (const LayerRegion *layerm : layer->regions())
-                cumulative_mm3 += layerm->perimeters.total_volume() + layerm->fills.total_volume();
+        for (const LdmLayerGeom &geom : layer_geom) {
+            cumulative_mm3 += geom.volume_mm3;
             if (runs_dry_z < 0. && cumulative_mm3 > capacity_mm3)
-                runs_dry_z = layer->print_z;
+                runs_dry_z = geom.z;
         }
         if (runs_dry_z >= 0.) {
             analysis.warnings.push_back({"LVP_RESERVOIR_REFILL", "high", "reservoir",
@@ -1760,6 +1837,96 @@ void Print::update_clay_body_continuity_analysis() const
                 runs_dry_z});
             if (analysis.overall_risk_level != "high_risk")
                 analysis.overall_risk_level = "guarded";
+        }
+    }
+
+    // ---- B4 Tier-1 self-weight stability screening ----
+    // Conservative (no strength-gain time credit). Requires declared material
+    // properties and the nominal bead; parameters default to 0 = off until
+    // the Track D calibration prints measure them.
+    {
+        constexpr double g = 9.81;
+        constexpr double buckle_knockdown = 0.3; // of the classical 0.605 E t/R
+        constexpr double flag_at = 0.8;          // utilization that triggers a warning
+        const double density = m_config.filament_density.values.empty() ? 0.0 : m_config.filament_density.values.front() * 1000.0; // g/cm3 -> kg/m3
+        const double sigma_y = m_config.ldm_wet_yield_strength.values.empty() ? 0.0 : m_config.ldm_wet_yield_strength.values.front() * 1000.0; // kPa -> Pa
+        const double e_mod   = m_config.ldm_e_modulus.values.empty() ? 0.0 : m_config.ldm_e_modulus.values.front() * 1000.0; // kPa -> Pa
+        const double bead_m  = m_config.ldm_nominal_bead_width_mm.value * 1e-3;
+        auto &stab = analysis.stability;
+        if (density > EPSILON && sigma_y > EPSILON && bead_m > EPSILON && layer_geom.size() > 2) {
+            stab.evaluated = true;
+            const int n_layers = int(layer_geom.size());
+            std::vector<double> mass(n_layers);
+            for (int i = 0; i < n_layers; ++ i)
+                mass[i] = layer_geom[i].volume_mm3 * 1e-9 * density; // kg
+            // suffix sums of mass and mass-weighted centroid above each level
+            double m_above = 0.;
+            Vec2d  m_centroid(0., 0.);
+            const double top_z = layer_geom.back().z;
+            for (int j = n_layers - 1; j >= 0; -- j) {
+                if (j + 1 < n_layers) {
+                    m_above += mass[j + 1];
+                    m_centroid += mass[j + 1] * layer_geom[j + 1].centroid_m;
+                }
+                const LdmLayerGeom &lg = layer_geom[j];
+                if (!lg.has_wall || lg.perim_m < EPSILON || m_above < 1e-9)
+                    continue;
+                const double sigma = g * m_above / (lg.perim_m * bead_m);
+                const double squash = sigma / sigma_y;
+                if (squash > stab.squash_ratio) {
+                    stab.squash_ratio = squash;
+                    if (squash >= stab.buckle_ratio && squash >= stab.cantilever_ratio && squash >= flag_at) {
+                        stab.predicted_mode = "squash";
+                        stab.failing_z_mm = lg.z;
+                    }
+                }
+                if (e_mod > EPSILON && lg.r_flat_m > EPSILON) {
+                    const double free_h = (top_z - lg.z) * 1e-3;
+                    const double wavelength = 4.0 * std::sqrt(lg.r_flat_m * bead_m);
+                    if (free_h >= wavelength) {
+                        const double sigma_cr = buckle_knockdown * 0.605 * e_mod * bead_m / lg.r_flat_m;
+                        const double buckle = sigma / std::max(sigma_cr, 1e-9);
+                        if (buckle > stab.buckle_ratio) {
+                            stab.buckle_ratio = buckle;
+                            if (buckle >= stab.squash_ratio && buckle >= stab.cantilever_ratio && buckle >= flag_at) {
+                                stab.predicted_mode = "buckle";
+                                stab.failing_z_mm = lg.z;
+                            }
+                        }
+                    }
+                }
+                const Vec2d centroid_above = m_centroid / m_above;
+                const double offset = (centroid_above - lg.centroid_m).norm();
+                const double overturn = g * m_above * offset;
+                const double resist = sigma_y * lg.perim_m * bead_m * std::max(lg.r_mean_m, 1e-9);
+                const double cantilever = overturn / std::max(resist, 1e-9);
+                if (cantilever > stab.cantilever_ratio) {
+                    stab.cantilever_ratio = cantilever;
+                    if (cantilever >= stab.squash_ratio && cantilever >= stab.buckle_ratio && cantilever >= flag_at) {
+                        stab.predicted_mode = "cantilever";
+                        stab.failing_z_mm = lg.z;
+                    }
+                }
+            }
+            struct { const char *code; const char *mode; double ratio; } modes[] = {
+                {"LVP_STABILITY_SQUASH",     "squash",     stab.squash_ratio},
+                {"LVP_STABILITY_BUCKLE",     "buckle",     stab.buckle_ratio},
+                {"LVP_STABILITY_CANTILEVER", "cantilever", stab.cantilever_ratio},
+            };
+            for (const auto &m : modes) {
+                if (m.ratio < flag_at)
+                    continue;
+                const bool over = m.ratio >= 1.0;
+                analysis.warnings.push_back({m.code, over ? "high" : "medium", "stability",
+                    over ? L("LDM stability screening predicts collapse under self-weight (conservative, no drying credit).")
+                         : L("LDM stability screening is close to the self-weight limit (conservative, no drying credit)."),
+                    Slic3r::format("mode=%s, utilization=%.2f, at_z=%.1f", m.mode, m.ratio, stab.failing_z_mm),
+                    stab.failing_z_mm});
+                if (over)
+                    analysis.overall_risk_level = "high_risk";
+                else if (analysis.overall_risk_level != "high_risk")
+                    analysis.overall_risk_level = "guarded";
+            }
         }
     }
 }

@@ -496,6 +496,46 @@ TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exce
     CHECK(refill->z_hint_mm <= 20.0);
 }
 
+TEST_CASE("LDM stability screening stays off without declared material properties", "[Print][ClayVasePlus][Stability]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 }
+        // density / yield / modulus left at defaults (0) -> screening off
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK_FALSE(analysis.stability.evaluated);
+    CHECK(analysis.stability.predicted_mode == "stable");
+}
+
+TEST_CASE("LDM stability screening flags squash for an absurdly weak material", "[Print][ClayVasePlus][Stability]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 5 g/cm3 paste with 0.01 kPa yield: a 20mm cube must exceed the squash
+    // limit (sigma = rho*g*h ~ 981 Pa vs 10 Pa capacity).
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 },
+        { "filament_density", "5" },
+        { "ldm_wet_yield_strength", "0.01" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE(analysis.stability.evaluated);
+    CHECK(analysis.stability.squash_ratio > 1.0);
+    CHECK(analysis.stability.predicted_mode == "squash");
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LVP_STABILITY_SQUASH"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "high");
+}
+
 TEST_CASE("LDM Vase Plus body continuity stays inert when clay mode is off", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
