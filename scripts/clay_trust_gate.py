@@ -110,6 +110,8 @@ def main() -> int:
     for case in manifest:
         name = case["name"]
         if args.pre_sliced is not None:
+            if "gcode" not in case:
+                continue  # clay variants exist only as fresh slices
             gcode = args.pre_sliced / case["gcode"]
         else:
             if args.slicer is None:
@@ -122,6 +124,46 @@ def main() -> int:
             failures.append(name)
         print(f"{name:<28} {case['expected']:<20} {actual:<20} {signals}"
               + ("" if ok else "   <-- MISMATCH"))
+
+        # Phase 2: in-slicer analysis assertions via the sidecar JSON written
+        # by the fork when clay_mode is active (audit gaps 2+3: fixture
+        # acceptance for docs/b2-support-margin-contract.md on the real
+        # corpus geometry).
+        expected_analysis = case.get("analysis")
+        if expected_analysis is None or args.pre_sliced is not None:
+            continue
+        sidecar = gcode.with_name(gcode.name + ".clay-analysis.json")
+        if not sidecar.exists():
+            failures.append(name + ":sidecar-missing")
+            print(f"    {name}: analysis sidecar MISSING at {sidecar}")
+            continue
+        analysis = json.loads(sidecar.read_text(encoding="utf-8"))
+        worst_advance = max(
+            (loop["worst_advance_mm"] for loop in analysis.get("support_margin_field", [])),
+            default=None,
+        )
+        checks = {
+            "risk_distribution_mode": (
+                expected_analysis.get("risk_distribution_mode"),
+                analysis.get("risk_distribution_mode"),
+            ),
+            "support_margin_status": (
+                expected_analysis.get("support_margin_status"),
+                analysis.get("support_margin_summary", {}).get("status"),
+            ),
+        }
+        for key, (want, got) in checks.items():
+            if want is not None and got != want:
+                failures.append(f"{name}:{key}")
+                print(f"    {name}: {key} expected {want!r}, got {got!r}   <-- MISMATCH")
+        lo = expected_analysis.get("worst_advance_min_mm")
+        hi = expected_analysis.get("worst_advance_max_mm")
+        if lo is not None and (worst_advance is None or not (lo <= worst_advance <= hi)):
+            failures.append(f"{name}:worst_advance")
+            print(f"    {name}: worst_advance {worst_advance} outside [{lo}, {hi}]   <-- MISMATCH")
+        print(f"    {name}: in-slicer worst_advance_mm={worst_advance} "
+              f"status={analysis.get('support_margin_summary', {}).get('status')} "
+              f"mode={analysis.get('risk_distribution_mode')}")
     if failures:
         print(f"\nTRUST GATE FAILED: {failures}")
         return 1

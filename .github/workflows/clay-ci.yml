@@ -17,6 +17,7 @@ on:
       - '**/CMakeLists.txt'
       - 'version.inc'
       - 'tests/**'
+      - 'scripts/**'
       - '.github/workflows/build_*.yml'
       - '.github/workflows/clay-ci.yml'
   pull_request:
@@ -35,6 +36,16 @@ jobs:
     with:
       os: ubuntu-24.04-arm
       arch: aarch64
+    secrets: inherit
+
+  build_windows:
+    # Produces the portable Windows x64 zip artifact - the runnable build for
+    # the actual clay machine workflow (no local VS toolchain required).
+    name: Build Windows x64
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: windows-latest
+      arch: x64
     secrets: inherit
 
   unit_tests:

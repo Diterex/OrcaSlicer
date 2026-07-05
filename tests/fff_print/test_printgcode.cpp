@@ -23,6 +23,7 @@
 #include <fstream>
 #include <iterator>
 #include <set>
+#include "nlohmann/json.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -297,6 +298,33 @@ TEST_CASE("Clay Vase Plus clay-native startup strips purge-like start lines", "[
     REQUIRE(gcode.find("\nG1 E-1.25 F300\n") == std::string::npos);
     REQUIRE(gcode.find("\nG1 X97.123 Y4.5 E6.75 F812\n") == std::string::npos);
     REQUIRE(gcode.find("M117 clay") != std::string::npos);
+}
+
+TEST_CASE("Clay Vase Plus writes an analysis sidecar next to exported G-code", "[PrintGCode][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "clay_mode", "vase_plus" }
+    });
+    print.set_status_silent();
+    print.process();
+
+    boost::filesystem::path gcode_path =
+        boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("clay-sidecar-%%%%%%%%.gcode");
+    print.export_gcode(gcode_path.string(), nullptr, nullptr);
+    boost::filesystem::path sidecar = gcode_path;
+    sidecar += ".clay-analysis.json";
+
+    REQUIRE(boost::filesystem::exists(sidecar));
+    std::ifstream sidecar_stream(sidecar.string());
+    nlohmann::json j = nlohmann::json::parse(sidecar_stream);
+    CHECK(j["clay_mode_active"] == true);
+    CHECK(j["support_margin_summary"]["status"] == "safe");
+    CHECK(j["support_margin_field"].size() > 0);
+
+    boost::filesystem::remove(gcode_path);
+    boost::filesystem::remove(sidecar);
 }
 
 TEST_CASE("Sequential printing follows model order", "[PrintGCode]")
