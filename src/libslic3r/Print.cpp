@@ -1638,7 +1638,7 @@ void Print::update_clay_body_continuity_analysis() const
     double worst_margin = std::numeric_limits<double>::max();
     double worst_z = -1.0;
     bool   any_marginal = false, any_failing = false, any_body_loop = false;
-    const LayerPtrs &object_layers = object->layers();
+    const auto object_layers = object->layers(); // ConstLayerPtrsAdaptor
     for (int i = 0; i < int(object_layers.size()); ++ i) {
         const Layer *layer = object_layers[i];
         std::vector<Vec2d> wall = outer_wall_points_mm(layer);
