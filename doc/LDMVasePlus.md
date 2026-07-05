@@ -146,6 +146,16 @@ Length of the tip cone from orifice to body. Same consumer as the angle.
 **Tip orifice diameter:** deliberately *not* a separate setting — the
 orifice **is** the nozzle, so keep using `nozzle_diameter` (3.3 mm for
 the Supatube #4 setup). One source of truth keeps all flow math correct.
+This does **not** assume the tip never changes — it assumes a tip swap
+updates `nozzle_diameter`, the same way FFF users handle nozzle swaps.
+
+**Recommended tip-swap workflow:** a physical tip change alters three
+values (orifice = `nozzle_diameter`, cone angle, cone length), so keep
+**one printer preset per tip** — e.g. "Ender5+ Supatube #3",
+"Ender5+ Supatube #4" — each bundling all three. Swap the tip, pick the
+matching preset, and flow math, analysis sampling, and the future
+collision checks all follow automatically. (This is the same preset
+mechanism stock Orca uses for 0.2/0.4/0.6 nozzle variants.)
 
 ---
 
