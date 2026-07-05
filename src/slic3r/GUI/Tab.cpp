@@ -4867,6 +4867,7 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("ldm_reservoir_volume_ml", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-reservoir-volume");
         optgroup->append_single_option_line("ldm_tip_cone_angle", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-tip-cone-angle");
         optgroup->append_single_option_line("ldm_tip_cone_length", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-tip-cone-length");
+        optgroup->append_single_option_line("ldm_tip_top_diameter", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-tip-top-diameter");
         optgroup->append_single_option_line("bbl_use_printhost", "printer_basic_information_advanced#use-3rd-party-print-host");
         optgroup->append_single_option_line("use_3mf");
         optgroup->append_single_option_line("scan_first_layer" , "printer_basic_information_advanced#scan-first-layer");

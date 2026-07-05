@@ -3971,6 +3971,17 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
+    def          = this->add("ldm_tip_top_diameter", coFloat);
+    def->label   = L("LDM tip top diameter");
+    def->sidetext = L("mm");
+    def->tooltip = L("Alternative to the cone angle: outer diameter at the top of the tip cone, usually easier "
+                     "to measure with calipers. When both this and the cone length are set, the effective cone "
+                     "angle is derived from (top diameter - nozzle diameter) / (2 x length) and overrides the "
+                     "angle field. The bottom orifice is the nozzle diameter.");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
     def = this->add("support_multi_bed_types", coBool);
     def->label = L("Support multi bed types");
     def->tooltip = L("Enable this option if you want to use multiple bed types.");

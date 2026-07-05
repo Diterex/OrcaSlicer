@@ -307,7 +307,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "ldm_ram_mix_factor",
         "ldm_reservoir_volume_ml",
         "ldm_tip_cone_angle",
-        "ldm_tip_cone_length"
+        "ldm_tip_cone_length",
+        "ldm_tip_top_diameter"
     };
 
     static std::unordered_set<std::string> steps_ignore;

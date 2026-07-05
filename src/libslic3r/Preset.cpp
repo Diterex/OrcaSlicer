@@ -1371,7 +1371,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "printer_technology",
     // Clay fork: machine identity + startup handling.
     "ldm_modded_printer", "ldm_feed_type", "ldm_ram_mix_factor", "ldm_reservoir_volume_ml",
-    "ldm_tip_cone_angle", "ldm_tip_cone_length", "ldm_start_gcode_mode",
+    "ldm_tip_cone_angle", "ldm_tip_cone_length", "ldm_tip_top_diameter", "ldm_start_gcode_mode",
     "printable_area", "extruder_printable_area", "support_parallel_printheads", "parallel_printheads_count", "parallel_printheads_bed_exclude_areas", "bed_exclude_area","bed_custom_texture", "bed_custom_model", "gcode_flavor",
     "fan_kickstart", "part_cooling_fan_min_pwm", "fan_speedup_time", "fan_speedup_overhangs",
     "single_extruder_multi_material", "manual_filament_change", "file_start_gcode", "machine_start_gcode", "machine_end_gcode", "before_layer_change_gcode", "printing_by_object_gcode", "layer_change_gcode", "time_lapse_gcode", "wrapping_detection_gcode", "change_filament_gcode", "change_extrusion_role_gcode",

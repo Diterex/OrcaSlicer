@@ -1598,6 +1598,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              ldm_reservoir_volume_ml))
     ((ConfigOptionFloat,              ldm_tip_cone_angle))
     ((ConfigOptionFloat,              ldm_tip_cone_length))
+    ((ConfigOptionFloat,              ldm_tip_top_diameter))
     ((ConfigOptionFloat,              ldm_nominal_bead_width_mm))
     ((ConfigOptionFloat,              ldm_nominal_layer_height_mm))
     ((ConfigOptionFloat,              ldm_max_unsupported_step_mm))
