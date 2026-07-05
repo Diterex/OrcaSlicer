@@ -3020,6 +3020,17 @@ void TabPrint::build()
         optgroup->append_single_option_line("timelapse_type", "others_settings_special_mode#timelapse");
         optgroup->append_single_option_line("enable_wrapping_detection");
 
+        // Clay fork: Clay Vase Plus analysis settings. Doc links point at the
+        // fork-hosted manual (absolute URLs pass through OptionsGroup::get_url).
+        optgroup = page->new_optgroup(L("Clay Vase Plus"), L"param_special");
+        optgroup->append_single_option_line("clay_mode", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-mode");
+        optgroup->append_single_option_line("clay_nominal_bead_width_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-nominal-bead-width");
+        optgroup->append_single_option_line("clay_nominal_layer_height_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-nominal-layer-height");
+        optgroup->append_single_option_line("clay_max_unsupported_step_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-max-unsupported-step");
+        optgroup->append_single_option_line("clay_continuous_path_required", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-continuous-path-required");
+        optgroup->append_single_option_line("clay_disable_retracts", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#prefer-no-retracts");
+        optgroup->append_single_option_line("clay_disable_z_hop", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#prefer-no-z-hop");
+
         optgroup = page->new_optgroup(L("Fuzzy skin"), L"fuzzy_skin");
         optgroup->append_single_option_line("fuzzy_skin", "others_settings_fuzzy_skin");
         optgroup->append_single_option_line("fuzzy_skin_mode", "others_settings_fuzzy_skin#fuzzy-skin-mode");
@@ -4957,6 +4968,8 @@ void TabPrinter::build_fff()
         option.opt.is_code = true;
         option.opt.height = gcode_field_height;//150;
         optgroup->append_single_option_line(option, "printer_machine_gcode#machine-start-g-code");
+        // Clay fork: clay-native startup sanitizing lives with the start G-code.
+        optgroup->append_single_option_line("clay_start_gcode_mode", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/ClayVasePlus.md#clay-start-g-code-mode");
 
         optgroup = page->new_optgroup(L("Machine end G-code"), L"param_gcode", 0);
         optgroup->m_on_change = [this, &optgroup_title = optgroup->title](const t_config_option_key& opt_key, const boost::any& value) {
