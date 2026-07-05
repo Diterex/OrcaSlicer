@@ -128,6 +128,11 @@ there). The comparison is volume-to-volume; no density guesswork.
 Skirt/brim volume is not counted, so treat the reported height as
 slightly optimistic.
 
+Common values: **100** (100cc syringe), **500** (500cc syringe),
+**2000** (2L tube/syringe), and **0 for continuous feed** — an endless
+supply (pump/hopper-fed) has no run-dry height, so 0 turns the check
+off by design.
+
 ### LDM tip cone angle
 
 `ldm_tip_cone_angle` — degrees (default 0 = undeclared)
