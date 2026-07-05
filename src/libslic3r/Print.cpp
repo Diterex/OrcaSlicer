@@ -1485,18 +1485,24 @@ void Print::update_clay_body_continuity_analysis() const
         const float  narrow_width = clay_bead > EPSILON ? float(0.35 * clay_bead) : 0.f;
         for (const LayerRegion *layerm : layer->regions()) {
             walk(&layerm->perimeters, stats);
+            // Gap fill can come from the perimeter generator (thin_fills) or
+            // from the infill stage in solid layers (fills, role erGapFill) —
+            // the base-rescue structure of the Julia+MOP case lives in the
+            // latter. Count narrow paths by role, wherever they are stored.
             std::function<void(const ExtrusionEntity *)> count_narrow = [&](const ExtrusionEntity *entity) {
                 if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity)) {
-                    if (path->width < narrow_width)
+                    if (path->role() == erGapFill && path->width < narrow_width)
                         ++ stats.narrow_gap_fills;
                 } else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(entity)) {
                     for (const ExtrusionPath &p : multi_path->paths)
-                        if (p.width < narrow_width) { ++ stats.narrow_gap_fills; break; }
+                        if (p.role() == erGapFill && p.width < narrow_width) { ++ stats.narrow_gap_fills; break; }
                 } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
                     for (const ExtrusionEntity *child : collection->entities)
                         count_narrow(child);
             };
             for (const ExtrusionEntity *entity : layerm->thin_fills.entities)
+                count_narrow(entity);
+            for (const ExtrusionEntity *entity : layerm->fills.entities)
                 count_narrow(entity);
         }
         layer_stats.push_back(stats);
