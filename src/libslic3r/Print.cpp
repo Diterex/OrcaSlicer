@@ -1760,7 +1760,7 @@ void Print::update_clay_body_continuity_analysis() const
         for (const LayerRegion *layerm : layer->regions())
             geom.volume_mm3 += layerm->perimeters.total_volume() + layerm->fills.total_volume();
         std::vector<Vec2d> wall = outer_wall_points_mm(layer);
-        if (wall.size() >= 8) {
+        if (wall.size() >= 3) { // a square base wall has 4 points; match B2's threshold
             geom.has_wall = true;
             const size_t n = wall.size();
             double perim_mm = 0.;
