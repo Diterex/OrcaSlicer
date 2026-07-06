@@ -137,7 +137,7 @@ off by design.
 
 `ldm_tip_cone_angle` — degrees (default 0 = undeclared)
 
-Full cone angle of the deposition tip (e.g. your PME Supatube family).
+Full cone angle of the deposition tip (e.g. your PME SupaTube family).
 Edit when you swap tips. Consumed by the upcoming tip-collision
 validation for non-planar printing; declared now so tip presets can
 carry it.
@@ -158,28 +158,37 @@ both this and the cone length are set, the effective cone angle is
 derived —
 
 ```
-half-angle = atan( (top diameter − nozzle diameter) / (2 × cone length) )
+full cone angle = 2 × atan( (top diameter − nozzle diameter) / (2 × cone length) )
 ```
 
 — and **overrides** the angle field. Enter whichever pair you actually
 know: (angle + length) or (top diameter + length).
 
+*Worked example — the PME SupaTube on the reference machine* (rough
+caliper measurements): top inlet OD **17.20 mm**, length **32.93 mm**,
+bottom outlet OD 3.68 mm. The extrusion orifice stays
+`nozzle_diameter = 3.3 mm` (the 3.68 is the outer diameter of the tip at
+the outlet, not the bore). Derived full cone angle ≈
+2·atan((17.20 − 3.3)/(2 × 32.93)) ≈ **23.8°** — the slim reach that makes
+the SupaTube good into overhangs. These values ship pre-filled in the
+`Ender5+ #4 LDM.orca_printer` bundle.
+
 **Tip orifice diameter (the bottom of the tip):** deliberately *not* a
 separate setting — the orifice **is** the nozzle, so keep using
-`nozzle_diameter` (3.3 mm for the Supatube #4 setup). One source of
+`nozzle_diameter` (3.3 mm for the SupaTube #4 setup). One source of
 truth keeps all flow math correct, including the line widths your
 process defines as percentages of the nozzle. This does **not** assume
 the tip never changes — it assumes a tip swap updates `nozzle_diameter`,
 the same way FFF users handle nozzle swaps.
 
-**Tips are not Supatube-specific.** Any conical tip — Supatube, generic
+**Tips are not SupaTube-specific.** Any conical tip — SupaTube, generic
 cake nozzle, machined tip, cut syringe — is described by the same three
 numbers: bottom orifice (`nozzle_diameter`), cone length, and cone angle
 *or* top diameter. All are freely editable.
 
 **Recommended tip-swap workflow:** a physical tip change alters these
 values together, so keep **one printer preset per tip** — e.g.
-"Ender5+ Supatube #3", "Ender5+ 6mm generic" — each bundling orifice +
+"Ender5+ SupaTube #3", "Ender5+ 6mm generic" — each bundling orifice +
 cone geometry. Save any combination under your own name with the normal
 preset save button. Swap the tip, pick the matching preset, and flow
 math, analysis sampling, and the future collision checks all follow
