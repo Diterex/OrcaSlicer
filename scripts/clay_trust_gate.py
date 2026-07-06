@@ -72,6 +72,149 @@ def classify(signals: dict) -> str:
     return "clean_control"
 
 
+MOVE_RE = re.compile(
+    r"^G1(?=[ ;])"
+    r"(?:\s+X(?P<x>-?[\d.]+))?"
+    r"(?:\s+Y(?P<y>-?[\d.]+))?"
+    r"(?:\s+Z(?P<z>-?[\d.]+))?"
+    r"(?:\s+E(?P<e>-?[\d.]+))?"
+)
+Z_MARK_RE = re.compile(r"^;Z:([\d.]+)$")
+
+BODY_WALL_TYPES = {"Outer wall", "Overhang wall"}
+
+
+def verify_spiral_invariants(gcode_path: Path, expected: dict) -> list[str]:
+    """G-code-level intent verification for spiral/vase LDM output.
+
+    Proves the emitted toolpath is a valid continuous spiral, not just
+    that the analysis classified it. Invariants:
+      1. a wall-only spiral body exists after the base (in true spiral
+         vase, ;TYPE:Outer wall is declared once and carries across many
+         ;Z: markers — so the body is long runs of wall-typed moves with
+         no infill/support type ever becoming active);
+      2. Z rises monotonically through the body;
+      3. zero retractions in the body (the end-of-print retract/lift is
+         excluded);
+      4. zero real travel moves in the body — a travel is a no-extrusion
+         XY move over a meaningful distance; sub-bead zero-extrusion
+         smoothing segments do not count;
+      5. Z-marker pitch equals the layer height within 2%;
+      6. median extrusion per XY mm sits in the declared flow band
+         (mid-body only; spiral start/finish flow ramps excluded).
+    """
+    problems: list[str] = []
+    travel_min_mm = expected.get("travel_min_mm", 1.0)
+
+    # Parse into a flat move stream, carrying the active TYPE forward across
+    # ;Z: markers (the defining trait of spiral vase). The body span below
+    # runs to the last wall extrusion, so the end-of-print retract/lift that
+    # follows it is naturally excluded — no end-marker handling needed.
+    moves: list[dict] = []          # {lineno, z, e, dist, has_xy, type, layer_idx}
+    layer_z: list[float] = []
+    cur_type = "Unknown"
+    layer_idx = -1
+    x = y = z = 0.0
+    with gcode_path.open("r", encoding="utf-8", errors="replace") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            line = raw.rstrip()
+            m = Z_MARK_RE.match(line)
+            if m:
+                layer_idx += 1
+                layer_z.append(float(m.group(1)))
+                continue
+            m = TYPE_RE.match(line)
+            if m:
+                cur_type = m.group(1).strip()
+                continue
+            m = MOVE_RE.match(line)
+            if not m:
+                continue
+            nx = float(m.group("x")) if m.group("x") else x
+            ny = float(m.group("y")) if m.group("y") else y
+            nz = float(m.group("z")) if m.group("z") else z
+            e = float(m.group("e")) if m.group("e") else None
+            dist = ((nx - x) ** 2 + (ny - y) ** 2) ** 0.5
+            moves.append({"lineno": lineno, "z": nz, "e": e, "dist": dist,
+                          "has_xy": bool(m.group("x") or m.group("y")),
+                          "type": cur_type, "layer": layer_idx})
+            x, y, z = nx, ny, nz
+    if len(layer_z) < 8:
+        return [f"too few layer markers ({len(layer_z)})"]
+    total_z = max(layer_z) - min(layer_z)
+
+    # (1): the spiral body is the longest contiguous run of moves that is
+    # "clean" — wall-only extrusion, no retraction, no real travel. The solid
+    # base (infill + retracts) and any top cap fall outside it by construction;
+    # that is correct spiral-vase behavior (PrusaSlicer/Cura force a solid
+    # bottom). The body must then cover most of the print's height, which is
+    # what proves spiral mode actually engaged.
+    def is_break(mv: dict) -> bool:
+        if mv["e"] is not None and mv["e"] < 0:            # retraction
+            return True
+        if mv["e"] and mv["e"] > 0 and mv["type"] not in BODY_WALL_TYPES:  # non-wall extrusion
+            return True
+        if mv["has_xy"] and (mv["e"] is None or mv["e"] <= 0) and mv["dist"] >= travel_min_mm:  # travel
+            return True
+        return False
+
+    best = (0, 0)  # (start, end) of the longest clean run, half-open
+    run_start = 0
+    for i, mv in enumerate(moves):
+        if is_break(mv):
+            if i - run_start > best[1] - best[0]:
+                best = (run_start, i)
+            run_start = i + 1
+    if len(moves) - run_start > best[1] - best[0]:
+        best = (run_start, len(moves))
+    body = [mv for mv in moves[best[0]:best[1]] if mv["e"] and mv["e"] > 0 and mv["has_xy"]]
+    if len(body) < 50:
+        return [f"no continuous spiral body found (longest clean run {len(body)} extrusions)"]
+
+    body_z_span = body[-1]["z"] - body[0]["z"]
+    min_frac = expected.get("min_body_z_fraction", 0.5)
+    if total_z > 0 and body_z_span / total_z < min_frac:
+        problems.append(f"spiral body covers only {body_z_span/total_z:.0%} of print height "
+                        f"(< {min_frac:.0%}); spiral mode may not be engaged over the body")
+
+    # (2): monotonic Z through the body (near-guaranteed by construction; a
+    # residual check catches within-run anomalies)
+    z_drops = sum(1 for a, b in zip(body, body[1:]) if b["z"] < a["z"] - 1e-3)
+    if z_drops:
+        problems.append(f"Z not monotonic in spiral body: {z_drops} drop(s)")
+
+    # (5): median layer pitch == layer height over the body's layer span
+    # (median, not per-layer: a body-boundary layer can share a Z with its
+    # neighbor, and that 0.0 artifact must not fail an otherwise clean spiral).
+    layer_h = expected.get("layer_height", 1.32)
+    body_layers = sorted({mv["layer"] for mv in body if mv["layer"] >= 0})
+    zs = [layer_z[i] for i in body_layers if 0 <= i < len(layer_z)]
+    pitches = sorted(b - a for a, b in zip(zs, zs[1:]))
+    if pitches:
+        median_pitch = pitches[len(pitches) // 2]
+        if abs(median_pitch - layer_h) > 0.02 * layer_h:
+            problems.append(f"median layer pitch {median_pitch:.4f} deviates >2% from {layer_h}")
+        # a pitch of ~2x layer height means a revolution was skipped
+        if pitches[-1] > 1.6 * layer_h:
+            problems.append(f"max layer pitch {pitches[-1]:.4f} exceeds 1.6x layer height "
+                            "(possible skipped revolution)")
+
+    # (6): flow intent on the mid-body (exclude the spiral start/finish ramps)
+    band = expected.get("flow_band_e_per_mm")
+    if band:
+        trim = max(len(body) // 10, 1)
+        mid = body[trim:-trim]
+        ratios = sorted(mv["e"] / mv["dist"] for mv in mid if mv["dist"] > 0.5)
+        if not ratios:
+            problems.append("no extrusion moves found for flow check")
+        else:
+            median = ratios[len(ratios) // 2]
+            lo, hi = band
+            if not (lo <= median <= hi):
+                problems.append(f"median flow {median:.3f} E/mm outside intent band [{lo}, {hi}]")
+    return problems
+
+
 def slice_3mf(slicer: Path, model: Path, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [str(slicer), "--slice", "0", "--outputdir", str(out_dir), str(model)]
@@ -124,6 +267,19 @@ def main() -> int:
             failures.append(name)
         print(f"{name:<28} {case['expected']:<20} {actual:<20} {signals}"
               + ("" if ok else "   <-- MISMATCH"))
+
+        # Spiral-vase intent verification: prove the emitted toolpath is a
+        # valid continuous spiral, not just that the analysis classified it.
+        spiral = case.get("spiral")
+        if spiral is not None:
+            spiral_problems = verify_spiral_invariants(gcode, spiral)
+            if spiral_problems:
+                for p in spiral_problems:
+                    failures.append(f"{name}:spiral")
+                    print(f"    {name}: SPIRAL INVARIANT FAILED - {p}")
+            else:
+                print(f"    {name}: spiral invariants OK "
+                      "(wall-only body, monotonic Z, no retracts, no travels, pitch, flow)")
 
         # Phase 2: in-slicer analysis assertions via the sidecar JSON written
         # by the fork when clay_mode is active (audit gaps 2+3: fixture

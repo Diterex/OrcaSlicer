@@ -361,14 +361,24 @@ contract consumed by CI and by the upcoming correction engine.
   override must win — sidecar existence/contents, reservoir refill
   warning).
 - `.github/workflows/clay-ci.yml`: Linux build + full upstream suite;
-  **Windows x64 portable build** every push; compiler caching; the
-  **trust gate** — re-slices the three reference models (tumbler
-  control, Julia Heatwave, Julia+Make-Overhang-Printable) plus their
-  LDM-enabled variants and asserts both G-code-level classifications and
-  in-slicer verdicts against measured fixtures (tumbler: safe /
-  clean_control at 0.50 mm worst step; Julia: failing / body_spread at
-  5.48 mm; Julia+MOP: failing / base_concentrated at 10.31 mm — stock
-  overhang correction makes paste printability *worse*).
+  **Windows x64 portable build** every push (published to the rolling
+  `ldm-dev-latest` release); compiler caching; the **trust gate** —
+  re-slices the three reference models (tumbler control, Julia Heatwave,
+  Julia+Make-Overhang-Printable) plus their LDM-enabled variants and
+  asserts both G-code-level classifications and in-slicer verdicts
+  against measured fixtures (tumbler: safe / clean_control at 0.50 mm
+  worst step; Julia: failing / body_spread at 5.48 mm; Julia+MOP:
+  failing / base_concentrated at 10.31 mm — stock overhang correction
+  makes paste printability *worse*).
+- **Spiral-vase intent verification** (`scripts/clay_trust_gate.py`,
+  `verify_spiral_invariants`): on every push, the freshly sliced spiral
+  output is checked to *be* a valid continuous spiral, not merely
+  classified as one. It isolates the spiral body as the longest clean
+  run (wall-only, no retracts, no real travels), then asserts the body
+  covers most of the print height, Z is monotonic, the median layer
+  pitch equals the layer height (no skipped revolutions), and the median
+  flow per mm lies in the intended bead band. The solid base is
+  correctly excluded (a solid bottom is required spiral-vase behavior).
 - `tests/data/clay_corpus/`: reference models and expectations.
 - `scripts/clay_trust_gate.py`: the gate runner (also usable locally).
 
