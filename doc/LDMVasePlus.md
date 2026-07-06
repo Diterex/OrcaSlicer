@@ -321,6 +321,18 @@ continuity and leave witness marks in soft material.
 | `LVP_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
 | `LVP_STABILITY_SQUASH` / `LVP_STABILITY_BUCKLE` / `LVP_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
 
+### In-app risk panel (G-code preview)
+
+After slicing, the **G-code preview legend** shows an **"LDM Vase Plus
+analysis"** section (collapsible). It surfaces the same verdict as the
+sidecar, localized by height so you can see *where* the risk is: overall
+risk and mode, support-margin status with the first-violation and worst
+heights, the body fragmentation zone's Z range, any stability-screen mode
+and failing height, and the full warning list — each warning colored by
+severity, tagged with its Z, and hover-for-detail. Colors: red = failing /
+high, amber = marginal / guarded, green = safe. This is the first B3
+overlay slice; a painted-on-model / slider-marker view is a later step.
+
 ### The analysis sidecar
 
 Exporting G-code with the LDM printer flag on writes
