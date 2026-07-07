@@ -350,7 +350,7 @@ contract consumed by CI and by the upcoming correction engine.
 
 ## Known issues
 
-### `ldm_*` settings could reset to defaults on a saved project's reload (fixed 2026-07-07, pending CI)
+### `ldm_*` settings could reset to defaults on a saved project's reload (fixed and verified 2026-07-07)
 
 Opening a saved 3MF project could leave *LDM Modded Printer* (and other
 `ldm_*` options) reset to their compiled defaults in the running app, even
@@ -360,11 +360,10 @@ sidecar-worthy data) and no error shown. Root-caused to a gap in the preset
 "different from system" diff tracking (custom fork options are invisible to
 it because no stock system profile ever declares them), fixed in
 `src/libslic3r/PresetBundle.cpp` by forcing all 16 `ldm_*` keys into that
-tracking explicitly. Fixed on `clay-vase-plus`, **not yet confirmed by CI or
-a rebuild** — if a reopened project still looks unconfigured after this
-lands, that means the fix needs another pass; check the box by hand as a
-workaround in the meantime and see the project repo's
-`docs/project-audit-2026-07-07.md` §1.4 for the full trace.
+tracking explicitly. Fixed on `clay-vase-plus`, CI-green, and directly
+re-confirmed against a freshly-built `ldm-dev-latest` binary — see the
+project repo's `docs/project-audit-2026-07-07.md` §1.4 for the full trace
+and verification evidence.
 
 ---
 
