@@ -2286,12 +2286,17 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
     m_processor.result().long_retraction_when_cut = activate_long_retraction_when_cut;
    
     {   //BBS:check bed and filament compatible
-        const ConfigOptionInts *bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(m_config.curr_bed_type));
+        // Clay fork: on an LDM printer, bed_temp == 0 means "intentionally
+        // unheated" (wet clay needs no bed heat), not "unset/incompatible" -
+        // skip the stock filament/plate compatibility nag in that case.
         std::vector<int> conflict_filament;
-        for(auto extruder_id : m_initial_layer_extruders){
-            int cur_bed_temp = bed_temp_opt->get_at(extruder_id);
-            if (cur_bed_temp == 0) {
-                conflict_filament.push_back(extruder_id);
+        if (!clay_mode_active(m_config)) {
+            const ConfigOptionInts *bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(m_config.curr_bed_type));
+            for(auto extruder_id : m_initial_layer_extruders){
+                int cur_bed_temp = bed_temp_opt->get_at(extruder_id);
+                if (cur_bed_temp == 0) {
+                    conflict_filament.push_back(extruder_id);
+                }
             }
         }
 

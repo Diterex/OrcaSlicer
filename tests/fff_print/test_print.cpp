@@ -490,7 +490,7 @@ TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exce
 
     const auto &analysis = print.clay_vase_plus_analysis();
     const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
-        [](const auto &w) { return w.code == "LVP_RESERVOIR_REFILL"; });
+        [](const auto &w) { return w.code == "LDM_RESERVOIR_REFILL"; });
     REQUIRE(refill != analysis.warnings.end());
     CHECK(refill->z_hint_mm > 0.0);
     CHECK(refill->z_hint_mm <= 20.0);
@@ -531,7 +531,7 @@ TEST_CASE("LDM stability screening flags squash for an absurdly weak material", 
     CHECK(analysis.stability.squash_ratio > 1.0);
     CHECK(analysis.stability.predicted_mode == "squash");
     const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
-        [](const auto &w) { return w.code == "LVP_STABILITY_SQUASH"; });
+        [](const auto &w) { return w.code == "LDM_STABILITY_SQUASH"; });
     REQUIRE(warn != analysis.warnings.end());
     CHECK(warn->severity == "high");
 }

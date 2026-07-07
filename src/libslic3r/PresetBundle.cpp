@@ -3881,6 +3881,43 @@ const std::set<std::string> ignore_settings_list ={
     "print_settings_id", "filament_settings_id", "printer_settings_id"
 };
 
+// Clay fork: the "different from system" detection above (dirty_options_without_option_list,
+// ultimately ConfigBase::diff/DynamicConfig::diff) only walks the PARENT/system preset's own
+// key set, so any option missing from the parent preset's stored config is invisible to it,
+// no matter how different its value is. No stock system printer/process/filament profile ever
+// declares our custom ldm_* keys, so they can never be detected as "different" there - which
+// means on project reload, PresetCollection::load_external_preset() /
+// DynamicPrintConfig::update_non_diff_values_to_base_config() treats them as "not different"
+// and silently resets them to the parent's (compiled-default) value. Confirmed empirically:
+// both clay_corpus 3MF fixtures embed correct ldm_modded_printer=1 in their flat config, but
+// their own different_settings_to_system printer-section lists it in neither file - see
+// docs/project-audit-2026-07-07.md for the full trace. Force these specific keys into the
+// dirty-options list whenever they differ from the compiled default, independent of the
+// fragile generic detection, so they survive save/reload like every other setting.
+const std::vector<std::string> ldm_printer_option_keys = {
+    "ldm_modded_printer", "ldm_feed_type", "ldm_ram_mix_factor", "ldm_reservoir_volume_ml",
+    "ldm_tip_cone_angle", "ldm_tip_cone_length", "ldm_tip_top_diameter", "ldm_start_gcode_mode"
+};
+const std::vector<std::string> ldm_print_option_keys = {
+    "ldm_nominal_bead_width_mm", "ldm_nominal_layer_height_mm", "ldm_max_unsupported_step_mm",
+    "ldm_continuous_path_required", "ldm_disable_retracts", "ldm_disable_z_hop"
+};
+const std::vector<std::string> ldm_filament_option_keys = {
+    "ldm_wet_yield_strength", "ldm_e_modulus"
+};
+
+static void ldm_force_include_dirty_keys(std::vector<std::string> &dirty_options, const ConfigBase &edited, const std::vector<std::string> &keys)
+{
+    const ConfigBase &defaults = static_cast<const ConfigBase &>(FullPrintConfig::defaults());
+    for (const std::string &key : keys) {
+        const ConfigOption *opt_edited  = edited.option(key);
+        const ConfigOption *opt_default = defaults.option(key);
+        if (opt_edited != nullptr && opt_default != nullptr && *opt_edited != *opt_default
+            && std::find(dirty_options.begin(), dirty_options.end(), key) == dirty_options.end())
+            dirty_options.emplace_back(key);
+    }
+}
+
 DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optional<std::vector<int>> filament_maps_new) const
 {
     DynamicPrintConfig out;
@@ -3926,6 +3963,7 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
     const Preset* print_parent_preset =  this->prints.get_selected_preset_parent();
     if (print_parent_preset) {
         std::vector<std::string> dirty_options = this->prints.dirty_options_without_option_list(&(this->prints.get_edited_preset()), print_parent_preset, ignore_settings_list, false);
+        ldm_force_include_dirty_keys(dirty_options, this->prints.get_edited_preset().config, ldm_print_option_keys);
         if (!dirty_options.empty()) {
             different_print_settings = Slic3r::escape_strings_cstyle(dirty_options);
         }
@@ -3960,6 +3998,7 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
         const Preset* filament_parent_preset =  this->filaments.get_selected_preset_parent();
         if (filament_parent_preset) {
             std::vector<std::string> dirty_options = this->filaments.dirty_options_without_option_list(&(this->filaments.get_edited_preset()), filament_parent_preset, ignore_settings_list, false);
+            ldm_force_include_dirty_keys(dirty_options, this->filaments.get_edited_preset().config, ldm_filament_option_keys);
             if (!dirty_options.empty()) {
                 different_filament_settings = Slic3r::escape_strings_cstyle(dirty_options);
             }
@@ -4016,16 +4055,17 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
 
             if (filament_parent_preset) {
                 std::vector<std::string> dirty_options = cfg_rw.diff(filament_parent_preset->config);
-                if (!dirty_options.empty()) {
-                    auto iter = dirty_options.begin();
-                    while (iter != dirty_options.end()) {
-                        if (ignore_settings_list.find(*iter) != ignore_settings_list.end()) {
-                            iter = dirty_options.erase(iter);
-                        }
-                        else {
-                            ++iter;
-                        }
+                auto iter = dirty_options.begin();
+                while (iter != dirty_options.end()) {
+                    if (ignore_settings_list.find(*iter) != ignore_settings_list.end()) {
+                        iter = dirty_options.erase(iter);
                     }
+                    else {
+                        ++iter;
+                    }
+                }
+                ldm_force_include_dirty_keys(dirty_options, cfg_rw, ldm_filament_option_keys);
+                if (!dirty_options.empty()) {
                     different_filament_settings = Slic3r::escape_strings_cstyle(dirty_options);
                 }
             }
@@ -4101,6 +4141,7 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
     const Preset* printer_parent_preset =  this->printers.get_selected_preset_parent();
     if (printer_parent_preset) {
         std::vector<std::string> dirty_options = this->printers.dirty_options_without_option_list(&(this->printers.get_edited_preset()), printer_parent_preset, ignore_settings_list, false);
+        ldm_force_include_dirty_keys(dirty_options, this->printers.get_edited_preset().config, ldm_printer_option_keys);
         if (!dirty_options.empty()) {
             different_printer_settings = Slic3r::escape_strings_cstyle(dirty_options);
         }

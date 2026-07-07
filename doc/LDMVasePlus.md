@@ -121,7 +121,7 @@ drive hardware.
 
 Usable material volume of the reservoir feeding the auger. When set, the
 slicer compares the print's cumulative extruded volume against it and, if
-the print needs more than one load, emits **`LVP_RESERVOIR_REFILL`**: the
+the print needs more than one load, emits **`LDM_RESERVOIR_REFILL`**: the
 total needed volume, the capacity, and **the Z height at which the
 reservoir runs dry** — so you can plan the refill (or place a pause
 there). The comparison is volume-to-volume; no density guesswork.
@@ -265,7 +265,7 @@ The admissible horizontal step of one wall loop past the loop below.
   measured last-clean angle θ).
 
 Loops stepping beyond this are `failing` and produce
-`LVP_SUPPORT_MARGIN_FAILING` with the worst Z.
+`LDM_SUPPORT_MARGIN_FAILING` with the worst Z.
 
 ### Require continuous LDM path
 
@@ -273,7 +273,7 @@ Loops stepping beyond this are `failing` and produce
 
 Declares that this process expects one continuous deposition path
 (spiral vase). When on and spiral vase is off, you get the
-`LVP_SPIRAL_MODE_REQUIRED` reminder. **Clear it for legitimate non-vase
+`LDM_SPIRAL_MODE_REQUIRED` reminder. **Clear it for legitimate non-vase
 LDM processes** (solid parts, tiles) — you keep all other analysis
 without spiral nagging.
 
@@ -281,7 +281,7 @@ without spiral nagging.
 
 `ldm_disable_retracts` (default on)
 
-Warns (`LVP_RETRACT_BURDEN_HIGH`) when retraction is active: paste flow
+Warns (`LDM_RETRACT_BURDEN_HIGH`) when retraction is active: paste flow
 through an auger is far more stable without retract/restart pressure
 disturbances.
 
@@ -289,7 +289,7 @@ disturbances.
 
 `ldm_disable_z_hop` (default on)
 
-Warns (`LVP_ZHOP_WARNING`) when Z-hop is active: lift events break bead
+Warns (`LDM_ZHOP_WARNING`) when Z-hop is active: lift events break bead
 continuity and leave witness marks in soft material.
 
 ### LDM start G-code mode
@@ -311,15 +311,15 @@ continuity and leave witness marks in soft material.
 
 | Code | Meaning |
 |---|---|
-| `LVP_SPIRAL_MODE_REQUIRED` | Continuous path required but spiral vase is off |
-| `LVP_RETRACT_BURDEN_HIGH` | Retraction active while *Prefer no retracts* is on |
-| `LVP_ZHOP_WARNING` | Z-hop active while *Prefer no Z hop* is on |
-| `LVP_STARTUP_RETRACT_WARNING` / `LVP_STARTUP_PURGE_WARNING` | Retract-/purge-like lines in start G-code |
-| `LVP_WALL_FRAGMENTATION_HIGH` | Sustained body region with fragmented wall roles, with the zone's Z range |
-| `LVP_NARROW_GAP_MEDIUM` | Sub-bead rescue structure in the base region |
-| `LVP_SUPPORT_MARGIN_MARGINAL` / `LVP_SUPPORT_MARGIN_FAILING` | Outward step near / beyond the admissible envelope, with the worst Z |
-| `LVP_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
-| `LVP_STABILITY_SQUASH` / `LVP_STABILITY_BUCKLE` / `LVP_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
+| `LDM_SPIRAL_MODE_REQUIRED` | Continuous path required but spiral vase is off |
+| `LDM_RETRACT_BURDEN_HIGH` | Retraction active while *Prefer no retracts* is on |
+| `LDM_ZHOP_WARNING` | Z-hop active while *Prefer no Z hop* is on |
+| `LDM_STARTUP_RETRACT_WARNING` / `LDM_STARTUP_PURGE_WARNING` | Retract-/purge-like lines in start G-code |
+| `LDM_WALL_FRAGMENTATION_HIGH` | Sustained body region with fragmented wall roles, with the zone's Z range |
+| `LDM_NARROW_GAP_MEDIUM` | Sub-bead rescue structure in the base region |
+| `LDM_SUPPORT_MARGIN_MARGINAL` / `LDM_SUPPORT_MARGIN_FAILING` | Outward step near / beyond the admissible envelope, with the worst Z |
+| `LDM_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
+| `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
 
 ### In-app risk panel (G-code preview)
 
@@ -348,6 +348,26 @@ contract consumed by CI and by the upcoming correction engine.
 
 ---
 
+## Known issues
+
+### `ldm_*` settings could reset to defaults on a saved project's reload (fixed 2026-07-07, pending CI)
+
+Opening a saved 3MF project could leave *LDM Modded Printer* (and other
+`ldm_*` options) reset to their compiled defaults in the running app, even
+when the project's own embedded settings had them saved to something else —
+with the entire analysis pass silently dormant as a result (no warnings, no
+sidecar-worthy data) and no error shown. Root-caused to a gap in the preset
+"different from system" diff tracking (custom fork options are invisible to
+it because no stock system profile ever declares them), fixed in
+`src/libslic3r/PresetBundle.cpp` by forcing all 16 `ldm_*` keys into that
+tracking explicitly. Fixed on `clay-vase-plus`, **not yet confirmed by CI or
+a rebuild** — if a reopened project still looks unconfigured after this
+lands, that means the fix needs another pass; check the box by hand as a
+workaround in the meantime and see the project repo's
+`docs/project-audit-2026-07-07.md` §1.4 for the full trace.
+
+---
+
 ## Everything changed vs stock OrcaSlicer (developer changelog)
 
 **Slicing engine (`src/libslic3r/`)**
@@ -363,8 +383,14 @@ contract consumed by CI and by the upcoming correction engine.
   stability screening (squash / shell-buckle / cantilever, Suiker/Wolfs
   lineage, no drying credit); result structs including the queryable
   per-loop support-margin field.
+- `PresetBundle.cpp`: `ldm_force_include_dirty_keys()` — forces all 16
+  `ldm_*` keys into each preset section's "different from system" tracking
+  whenever they differ from the compiled default, fixing the reset-on-load
+  bug above.
 - `GCode.cpp`: clay-native startup sanitizer; analysis sidecar JSON
-  export.
+  export; bed/filament plate-compatibility check now skipped when LDM mode
+  is active (0°C bed temp is intentional for unheated clay printing, not an
+  unset/incompatible value — stock logic was flagging it as a plate error).
 
 **GUI (`src/slic3r/GUI/`)**
 - `Tab.cpp`: LDM machine group on Printer → Basic information (under
@@ -402,6 +428,10 @@ contract consumed by CI and by the upcoming correction engine.
   correctly excluded (a solid bottom is required spiral-vase behavior).
 - `tests/data/clay_corpus/`: reference models and expectations.
 - `scripts/clay_trust_gate.py`: the gate runner (also usable locally).
+
+**Naming**: warning codes were renamed from `LVP_*` to `LDM_*` (2026-07-07) —
+`LVP` ("LDM Vase Plus") read as an unexplained abbreviation next to every
+other user-facing symbol being `LDM`/`ldm_*`. No behavior change.
 
 **Not in this build (by design, next phases):** no toolpath correction,
 no in-viewport risk overlay (warnings + sidecar only), thresholds not
