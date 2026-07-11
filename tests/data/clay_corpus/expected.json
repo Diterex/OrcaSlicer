@@ -1,0 +1,17 @@
+[
+  { "name": "tumbler_control",   "model": "tumbler_v7.3mf",              "gcode": "Tumbler v7_223.097g_23m23s_$18.6816.gcode",                                             "expected": "clean_control" },
+  { "name": "julia_baseline",    "model": "julia_heatwave_baseline.3mf", "gcode": "Julia_Vase_011_-_Heatwave_-_Shell_979.69g_1h58m_$83.2708.gcode",                        "expected": "body_spread" },
+  { "name": "julia_mop",         "model": "julia_heatwave_mop.3mf",      "gcode": "MakeOverhangsPrintable Julia_Vase_011_-_Heatwave_-_Shell_1181.28g_2h26m_$100.73.gcode", "expected": "base_concentrated" },
+
+  { "name": "tumbler_clay",      "model": "tumbler_v7_clay.3mf",              "expected": "clean_control",
+    "analysis": { "risk_distribution_mode": "clean_control", "support_margin_status": "safe" },
+    "spiral": { "layer_height": 1.32, "flow_band_e_per_mm": [0.12, 0.40] } },
+  { "name": "julia_clay",        "model": "julia_heatwave_baseline_clay.3mf", "expected": "body_spread",
+    "analysis": { "risk_distribution_mode": "body_spread", "support_margin_status": "failing",
+                  "worst_advance_min_mm": 4.9, "worst_advance_max_mm": 6.1 },
+    "spiral": { "layer_height": 1.32, "flow_band_e_per_mm": [0.12, 0.40] } },
+  { "name": "julia_mop_clay",    "model": "julia_heatwave_mop_clay.3mf",      "expected": "base_concentrated",
+    "analysis": { "risk_distribution_mode": "base_concentrated", "support_margin_status": "failing",
+                  "worst_advance_min_mm": 8.0, "worst_advance_max_mm": 12.5 },
+    "spiral": { "layer_height": 1.32, "flow_band_e_per_mm": [0.12, 0.40] } }
+]

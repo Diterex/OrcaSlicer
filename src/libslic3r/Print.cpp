@@ -22,6 +22,8 @@
 #include <float.h>
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <unordered_set>
@@ -66,6 +68,56 @@ struct FilamentType {
     int max_temp;
     std::string temp_type;
 };
+
+static std::string trim_copy(std::string value)
+{
+    boost::trim(value);
+    return value;
+}
+
+static std::string lowercase_copy(std::string value)
+{
+    boost::to_lower(value);
+    return value;
+}
+
+// Clay behavior is a machine identity (a clay printer never prints filament),
+// mirroring pellet_modded_printer rather than a per-process mode.
+static bool clay_mode_active(const PrintConfig &config)
+{
+    return config.ldm_modded_printer.value;
+}
+
+// Expects an already-lowercased line.
+static bool line_has_xy_motion(const std::string &line)
+{
+    return line.find('x') != std::string::npos || line.find('y') != std::string::npos;
+}
+
+static bool line_looks_like_startup_retract(const std::string &line)
+{
+    // Matched against the lowercased line below.
+    static const boost::regex negative_e_move(R"((?:^|\s)e-\d)");
+    const std::string lowered = lowercase_copy(trim_copy(line));
+    if (lowered.empty() || lowered.front() == ';')
+        return false;
+    return boost::regex_search(lowered, negative_e_move) || lowered.find("g10") == 0 || lowered.find("retract") != std::string::npos;
+}
+
+static bool line_looks_like_purge_or_prime(const std::string &line)
+{
+    const std::string lowered = lowercase_copy(trim_copy(line));
+    if (lowered.empty() || lowered.front() == ';')
+        return false;
+    if (lowered.find("purge") != std::string::npos || lowered.find("prime line") != std::string::npos || lowered.find("wipe line") != std::string::npos)
+        return true;
+    return line_has_xy_motion(lowered) && lowered.find('e') != std::string::npos && (lowered.find("g0") == 0 || lowered.find("g1") == 0);
+}
+
+static int estimate_restart_burden_from_retraction_lengths(const ConfigOptionFloats &values)
+{
+    return int(std::count_if(values.values.begin(), values.values.end(), [](double value) { return value > EPSILON; }));
+}
 
 void Print::clear()
 {
@@ -193,6 +245,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "preheat_time",
         "preheat_steps",
         "machine_start_gcode",
+        "ldm_start_gcode_mode",
         "filament_start_gcode",
         "change_filament_gcode",
         "wipe",
@@ -243,7 +296,22 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "filament_notes",
         "process_notes",
         "printer_notes",
-        "use_3mf"
+        "use_3mf",
+        "ldm_modded_printer",
+        "ldm_nominal_bead_width_mm",
+        "ldm_nominal_layer_height_mm",
+        "ldm_max_unsupported_step_mm",
+        "ldm_continuous_path_required",
+        "ldm_disable_retracts",
+        "ldm_disable_z_hop",
+        "ldm_feed_type",
+        "ldm_ram_mix_factor",
+        "ldm_reservoir_volume_ml",
+        "ldm_tip_cone_angle",
+        "ldm_tip_cone_length",
+        "ldm_tip_top_diameter",
+        "ldm_wet_yield_strength",
+        "ldm_e_modulus"
     };
 
     static std::unordered_set<std::string> steps_ignore;
@@ -1263,6 +1331,722 @@ StringObjectException Print::check_multi_filament_valid(const Print& print)
 
 // Precondition: Print::validate() requires the Print::apply() to be called its invocation.
 //BBS: refine seq-print validation logic
+void Print::update_clay_vase_plus_analysis(std::vector<StringObjectException> *warnings) const
+{
+    ClayVasePlusAnalysisResult analysis;
+    analysis.metric_snapshot.nominal_bead_width_mm = m_config.ldm_nominal_bead_width_mm.value;
+    analysis.metric_snapshot.nominal_layer_height_mm = m_config.ldm_nominal_layer_height_mm.value;
+
+    if (!clay_mode_active(m_config)) {
+        m_clay_vase_plus_analysis = std::move(analysis);
+        return;
+    }
+
+    analysis.clay_mode_active = true;
+    analysis.overall_risk_level = "guarded";
+
+    auto add_warning = [&](const std::string &code, const std::string &severity, const std::string &category,
+                           const std::string &message, const std::string &metric, const std::string &opt_key = std::string()) {
+        analysis.warnings.push_back({code, severity, category, message, metric, -1.0});
+        if (warnings != nullptr) {
+            StringObjectException w;
+            w.is_warning = true;
+            w.string = message;
+            w.opt_key = opt_key;
+            warnings->push_back(std::move(w));
+        }
+    };
+
+    // Only nag about spiral vase when the process declares it expects one
+    // continuous path (non-vase clay workflows are legitimate on a clay printer).
+    if (!m_config.spiral_mode.value && m_config.ldm_continuous_path_required.value) {
+        add_warning("LDM_SPIRAL_MODE_REQUIRED", "medium", "mode",
+            L("This process expects a continuous clay path but Spiral vase is off; enable Spiral vase or clear the continuous-path requirement."),
+            "spiral_mode=false", "spiral_mode");
+        analysis.overall_risk_level = "high_risk";
+        analysis.risk_distribution_mode = "mixed";
+    }
+
+    const int restart_burden = estimate_restart_burden_from_retraction_lengths(m_config.retraction_length);
+    analysis.metric_snapshot.retract_count = restart_burden;
+    analysis.metric_snapshot.max_retraction_length_mm =
+        m_config.retraction_length.values.empty() ? 0.0 : *std::max_element(m_config.retraction_length.values.begin(), m_config.retraction_length.values.end());
+    analysis.metric_snapshot.max_z_hop_mm =
+        m_config.z_hop.values.empty() ? 0.0 : *std::max_element(m_config.z_hop.values.begin(), m_config.z_hop.values.end());
+
+    if (m_config.ldm_disable_retracts.value && analysis.metric_snapshot.max_retraction_length_mm > EPSILON) {
+        add_warning("LDM_RETRACT_BURDEN_HIGH", "high", "restart",
+            L("LDM Vase Plus detected active retraction settings. Wet-clay flow is usually more stable with retracts disabled."),
+            "max_retraction_length_mm=" + Slic3r::format("%.4f", analysis.metric_snapshot.max_retraction_length_mm), "retraction_length");
+        analysis.base_rescue_complexity.has_restart_heavy_transition = true;
+        analysis.base_rescue_complexity.level = "medium";
+        analysis.overall_risk_level = "high_risk";
+    }
+
+    if (m_config.ldm_disable_z_hop.value && analysis.metric_snapshot.max_z_hop_mm > EPSILON) {
+        add_warning("LDM_ZHOP_WARNING", "medium", "travel",
+            L("LDM Vase Plus detected active Z-hop. Wet clay usually benefits from direct continuous deposition without lift events."),
+            "max_z_hop_mm=" + Slic3r::format("%.4f", analysis.metric_snapshot.max_z_hop_mm), "z_hop");
+        if (analysis.overall_risk_level != "high_risk")
+            analysis.overall_risk_level = "guarded";
+    }
+
+    std::istringstream start_stream(m_config.machine_start_gcode.value);
+    std::string start_line;
+    while (std::getline(start_stream, start_line)) {
+        if (!analysis.startup_compatibility.startup_retract_risk && line_looks_like_startup_retract(start_line))
+            analysis.startup_compatibility.startup_retract_risk = true;
+        if (!analysis.startup_compatibility.purge_like_start_detected && line_looks_like_purge_or_prime(start_line))
+            analysis.startup_compatibility.purge_like_start_detected = true;
+    }
+
+    if (analysis.startup_compatibility.startup_retract_risk) {
+        add_warning("LDM_STARTUP_RETRACT_WARNING", "high", "startup",
+            L("LDM Vase Plus found a retract-like line in the start G-code. Startup retracts are usually hostile to wet-clay pressure continuity."),
+            "machine_start_gcode contains retract-like motion", "machine_start_gcode");
+        analysis.startup_compatibility.status = "warning";
+        analysis.overall_risk_level = "high_risk";
+    }
+
+    if (analysis.startup_compatibility.purge_like_start_detected) {
+        add_warning("LDM_STARTUP_PURGE_WARNING", "medium", "startup",
+            L("LDM Vase Plus found a purge-like line in the start G-code. Consider clay-native startup to avoid filament-style priming motions."),
+            "machine_start_gcode contains purge-like motion", "machine_start_gcode");
+        if (analysis.startup_compatibility.status == "compatible")
+            analysis.startup_compatibility.status = "warning";
+    }
+
+    m_clay_vase_plus_analysis = std::move(analysis);
+}
+
+// LDM Vase Plus Track B1: extract body continuity signals from the generated
+// wall structure. Reads LayerRegion::perimeters / thin_fills only; no slicing
+// behavior changes. Fills body_fragmentation_zone, base_rescue_complexity and
+// risk_distribution_mode of the analysis result created by validate().
+void Print::update_clay_body_continuity_analysis() const
+{
+    if (!clay_mode_active(m_config) || m_objects.empty())
+        return;
+
+    ClayVasePlusAnalysisResult &analysis = m_clay_vase_plus_analysis;
+    analysis.clay_mode_active = true;
+    if (analysis.overall_risk_level == "not_applicable")
+        analysis.overall_risk_level = "guarded";
+
+    // Vase workflows are single-object; analyze the first object with layers.
+    const PrintObject *object = nullptr;
+    for (const PrintObject *candidate : m_objects)
+        if (!candidate->layers().empty()) { object = candidate; break; }
+    if (object == nullptr)
+        return;
+
+    int base_layers = 0;
+    for (size_t region_idx = 0; region_idx < object->num_printing_regions(); ++ region_idx)
+        base_layers = std::max(base_layers, object->printing_region(region_idx).config().bottom_shell_layers.value);
+
+    struct LayerRoleStats {
+        double z { 0. };
+        int    external_runs { 0 };
+        int    overhang_runs { 0 };
+        // Gap fills markedly narrower than the nominal clay bead. Ordinary
+        // FFF gap fill (tiny corner gaps at any nozzle scale) is benign; the
+        // clay-hostile rescue signature is gap fill at a small fraction of
+        // the clay bead (0.66 mm against a 4.62 mm bead in the Julia+MOP
+        // case study). Without a declared ldm_nominal_bead_width_mm the
+        // metric cannot be judged and stays off.
+        int    narrow_gap_fills { 0 };
+    };
+
+    // Count contiguous same-role runs of wall paths. A run matches the
+    // ";TYPE:" section semantics of the G-code case metrics: repeated
+    // Outer wall / Overhang wall alternation within one loop is the
+    // body-spread fragmentation signature (contract metric M1/M6).
+    std::function<void(const ExtrusionEntity *, LayerRoleStats &)> walk =
+        [&walk](const ExtrusionEntity *entity, LayerRoleStats &stats) {
+        auto count_paths = [&stats](const ExtrusionPaths &paths) {
+            ExtrusionRole previous = erNone;
+            for (const ExtrusionPath &path : paths) {
+                ExtrusionRole role = path.role();
+                if (role != previous) {
+                    if (role == erExternalPerimeter)
+                        ++ stats.external_runs;
+                    else if (role == erOverhangPerimeter)
+                        ++ stats.overhang_runs;
+                    previous = role;
+                }
+            }
+        };
+        if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(entity))
+            count_paths(loop->paths);
+        else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(entity))
+            count_paths(multi_path->paths);
+        else if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity)) {
+            if (path->role() == erExternalPerimeter)
+                ++ stats.external_runs;
+            else if (path->role() == erOverhangPerimeter)
+                ++ stats.overhang_runs;
+        } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+            for (const ExtrusionEntity *child : collection->entities)
+                walk(child, stats);
+    };
+
+    std::vector<LayerRoleStats> layer_stats;
+    layer_stats.reserve(object->layers().size());
+    for (const Layer *layer : object->layers()) {
+        LayerRoleStats stats;
+        stats.z = layer->print_z;
+        const double clay_bead = m_config.ldm_nominal_bead_width_mm.value;
+        const float  narrow_width = clay_bead > EPSILON ? float(0.35 * clay_bead) : 0.f;
+        for (const LayerRegion *layerm : layer->regions()) {
+            walk(&layerm->perimeters, stats);
+            // Gap fill can come from the perimeter generator (thin_fills) or
+            // from the infill stage in solid layers (fills, role erGapFill) —
+            // the base-rescue structure of the Julia+MOP case lives in the
+            // latter. Count narrow paths by role, wherever they are stored.
+            std::function<void(const ExtrusionEntity *)> count_narrow = [&](const ExtrusionEntity *entity) {
+                if (const auto *path = dynamic_cast<const ExtrusionPath *>(entity)) {
+                    if (path->role() == erGapFill && path->width < narrow_width)
+                        ++ stats.narrow_gap_fills;
+                } else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(entity)) {
+                    for (const ExtrusionPath &p : multi_path->paths)
+                        if (p.role() == erGapFill && p.width < narrow_width) { ++ stats.narrow_gap_fills; break; }
+                } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+                    for (const ExtrusionEntity *child : collection->entities)
+                        count_narrow(child);
+            };
+            for (const ExtrusionEntity *entity : layerm->thin_fills.entities)
+                count_narrow(entity);
+            for (const ExtrusionEntity *entity : layerm->fills.entities)
+                count_narrow(entity);
+        }
+        layer_stats.push_back(stats);
+    }
+
+    // Base rescue complexity (metric M7): gap-fill rescue structure in the
+    // base and the transition right above it.
+    const int transition_end = std::min<int>(base_layers + 3, int(layer_stats.size()));
+    int    base_gap_fills = 0;
+    double base_worst_z = -1.0;
+    int    base_worst_count = 0;
+    for (int i = 0; i < transition_end; ++ i) {
+        base_gap_fills += layer_stats[i].narrow_gap_fills;
+        if (layer_stats[i].narrow_gap_fills > base_worst_count) {
+            base_worst_count = layer_stats[i].narrow_gap_fills;
+            base_worst_z = layer_stats[i].z;
+        }
+    }
+    analysis.base_rescue_complexity.has_gap_infill = base_gap_fills > 0;
+    analysis.base_rescue_complexity.highest_risk_z_mm = base_worst_z;
+    // Geometric evidence owns the level here (validate() may have set a
+    // config-level value from retract settings; that must not leak into the
+    // geometric risk_distribution_mode classification below). With a declared
+    // clay bead, ANY sub-35%-bead extrusion is physically unprintable in
+    // clay, so a single narrow rescue path already flags the base.
+    if (base_gap_fills >= 8)
+        analysis.base_rescue_complexity.level = "high";
+    else if (base_gap_fills > 0)
+        analysis.base_rescue_complexity.level = "medium";
+    else
+        analysis.base_rescue_complexity.level = "none";
+
+    // Body fragmentation zone (metric M6): first sustained run (>= 3
+    // consecutive body layers) of mixed wall roles.
+    auto  &zone = analysis.body_fragmentation_zone;
+    int    consecutive = 0;
+    bool   zone_open = false;
+    for (int i = base_layers; i < int(layer_stats.size()); ++ i) {
+        const LayerRoleStats &stats = layer_stats[i];
+        const bool mixed = stats.external_runs >= 2 || stats.overhang_runs >= 1;
+        if (mixed) {
+            ++ consecutive;
+            if (consecutive >= 3 && !zone.detected) {
+                zone.detected = true;
+                zone_open = true;
+                zone.z_start_mm = layer_stats[i - consecutive + 1].z;
+            }
+            if (zone_open) {
+                zone.z_end_mm = stats.z;
+                zone.peak_outer_wall_sections = std::max(zone.peak_outer_wall_sections, stats.external_runs);
+                zone.peak_overhang_wall_sections = std::max(zone.peak_overhang_wall_sections, stats.overhang_runs);
+            }
+        } else {
+            consecutive = 0;
+            zone_open = false;
+        }
+    }
+
+    // Risk distribution mode (metric M8) — from geometric evidence only.
+    const bool base_concentrated = base_gap_fills > 0;
+    if (zone.detected && base_concentrated)
+        analysis.risk_distribution_mode = "mixed";
+    else if (zone.detected)
+        analysis.risk_distribution_mode = "body_spread";
+    else if (base_concentrated)
+        analysis.risk_distribution_mode = "base_concentrated";
+    else
+        analysis.risk_distribution_mode = "clean_control";
+
+    if (zone.detected) {
+        analysis.overall_risk_level = "high_risk";
+        analysis.warnings.push_back({"LDM_WALL_FRAGMENTATION_HIGH", "high", "continuity",
+            L("LDM Vase Plus found a sustained body region with fragmented wall roles; continuous clay deposition is at risk there."),
+            Slic3r::format("zone_z=%.2f-%.2f, peak_outer=%d, peak_overhang=%d",
+                zone.z_start_mm, zone.z_end_mm, zone.peak_outer_wall_sections, zone.peak_overhang_wall_sections),
+            zone.z_start_mm});
+    }
+    if (base_concentrated) {
+        analysis.overall_risk_level = "high_risk";
+        analysis.warnings.push_back({"LDM_NARROW_GAP_MEDIUM", "medium", "base_rescue",
+            L("LDM Vase Plus found gap-fill rescue structure in the base region; narrow rescue features are usually filament-oriented and clay-hostile."),
+            Slic3r::format("base_gap_fill_entities=%d", base_gap_fills),
+            base_worst_z});
+    }
+
+    // ---- B2: support-margin field (docs/b2-support-margin-contract.md) ----
+    // Exact horizontal point-to-segment distance from samples of each wall
+    // loop to the polyline of the loop below. Nearest-SAMPLE shortcuts are a
+    // correctness bug (66 false positives on the tumbler control in the
+    // prototype); keep the segment projection.
+    constexpr double clay_theta_max_deg = 40.0; // process envelope; Track D calibrates
+    constexpr double clay_safety_frac   = 0.10;
+    constexpr double clay_dz_budget_frac = 0.35; // slump budget v1, fraction of layer height
+    const double a_max_override = m_config.ldm_max_unsupported_step_mm.value;
+    const double bead           = m_config.ldm_nominal_bead_width_mm.value;
+    const double sample_step    = std::max(bead > EPSILON ? 0.5 * bead : 1.0, 1.0);
+    const double tan_theta      = std::tan(clay_theta_max_deg * PI / 180.0);
+
+    // Largest wall loop of a layer (vase workflows have exactly one).
+    auto outer_wall_points_mm = [](const Layer *layer) {
+        const ExtrusionLoop *best = nullptr;
+        double best_area = 0.;
+        std::function<void(const ExtrusionEntity *)> visit = [&](const ExtrusionEntity *entity) {
+            if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(entity)) {
+                for (const ExtrusionPath &p : loop->paths)
+                    if (p.role() == erExternalPerimeter || p.role() == erOverhangPerimeter) {
+                        double area = std::abs(loop->polygon().area());
+                        if (area > best_area) { best_area = area; best = loop; }
+                        break;
+                    }
+            } else if (const auto *collection = dynamic_cast<const ExtrusionEntityCollection *>(entity))
+                for (const ExtrusionEntity *child : collection->entities)
+                    visit(child);
+        };
+        for (const LayerRegion *layerm : layer->regions())
+            visit(&layerm->perimeters);
+        std::vector<Vec2d> pts;
+        if (best != nullptr) {
+            const Polygon poly = best->polygon();
+            pts.reserve(poly.points.size());
+            for (const Point &p : poly.points)
+                pts.emplace_back(unscale(p));
+        }
+        return pts;
+    };
+
+    auto min_dist_to_polyline = [](const Vec2d &p, const std::vector<Vec2d> &poly) {
+        double best2 = std::numeric_limits<double>::max();
+        const size_t n = poly.size();
+        for (size_t k = 0; k < n; ++ k) {
+            const Vec2d &a = poly[k];
+            const Vec2d &b = poly[(k + 1) % n];
+            const Vec2d ab = b - a;
+            const double len2 = ab.squaredNorm();
+            double t = len2 > 1e-12 ? std::clamp((p - a).dot(ab) / len2, 0.0, 1.0) : 0.0;
+            best2 = std::min(best2, (p - (a + t * ab)).squaredNorm());
+        }
+        return std::sqrt(best2);
+    };
+
+    auto &summary = analysis.support_margin_summary;
+    std::vector<Vec2d> prev_wall;
+    int    prev_layer_idx = -1;
+    double worst_margin = std::numeric_limits<double>::max();
+    double worst_z = -1.0;
+    bool   any_marginal = false, any_failing = false, any_body_loop = false;
+    const auto object_layers = object->layers(); // ConstLayerPtrsAdaptor
+    for (int i = 0; i < int(object_layers.size()); ++ i) {
+        const Layer *layer = object_layers[i];
+        std::vector<Vec2d> wall = outer_wall_points_mm(layer);
+        if (wall.size() < 3) {
+            prev_wall.clear();
+            prev_layer_idx = -1;
+            continue;
+        }
+        if (!prev_wall.empty() && prev_layer_idx == i - 1) {
+            ClaySupportMarginLoop loop_field;
+            loop_field.layer_idx = i;
+            loop_field.z_mm = layer->print_z;
+            loop_field.a_max_mm = a_max_override > EPSILON ? a_max_override : layer->height * tan_theta;
+            loop_field.dz_budget_mm = clay_dz_budget_frac * layer->height;
+            // uniform arc resampling of the closed loop
+            double total = 0.;
+            for (size_t k = 0; k < wall.size(); ++ k)
+                total += (wall[(k + 1) % wall.size()] - wall[k]).norm();
+            const int n_samples = std::max(int(total / sample_step), 8);
+            loop_field.arc_pos.reserve(n_samples);
+            loop_field.advance_mm.reserve(n_samples);
+            {
+                double target = 0., walked = 0.;
+                size_t k = 0;
+                double seg_len = (wall[1 % wall.size()] - wall[0]).norm();
+                for (int s = 0; s < n_samples; ++ s, target = total * s / n_samples) {
+                    while (walked + seg_len < target && k + 1 < wall.size() * 2) {
+                        walked += seg_len;
+                        ++ k;
+                        seg_len = (wall[(k + 1) % wall.size()] - wall[k % wall.size()]).norm();
+                    }
+                    const Vec2d &a = wall[k % wall.size()];
+                    const Vec2d &b = wall[(k + 1) % wall.size()];
+                    const double frac = seg_len > 1e-12 ? std::clamp((target - walked) / seg_len, 0.0, 1.0) : 0.0;
+                    const Vec2d sample = a + frac * (b - a);
+                    loop_field.arc_pos.push_back(total > 1e-9 ? target / total : 0.0);
+                    loop_field.advance_mm.push_back(min_dist_to_polyline(sample, prev_wall));
+                }
+            }
+            if (i >= base_layers) {
+                any_body_loop = true;
+                const double worst_a = loop_field.worst_advance_mm();
+                const double margin = loop_field.a_max_mm - worst_a;
+                if (margin < worst_margin) {
+                    worst_margin = margin;
+                    worst_z = loop_field.z_mm;
+                }
+                const bool failing  = worst_a > loop_field.a_max_mm;
+                const bool marginal = !failing && worst_a > (1.0 - clay_safety_frac) * loop_field.a_max_mm;
+                if ((failing || marginal) && summary.first_warning_z_mm < 0.)
+                    summary.first_warning_z_mm = loop_field.z_mm;
+                any_failing  |= failing;
+                any_marginal |= marginal;
+            }
+            analysis.support_margin_field.push_back(std::move(loop_field));
+        }
+        prev_wall = std::move(wall);
+        prev_layer_idx = i;
+    }
+    if (any_body_loop) {
+        summary.status = any_failing ? "failing" : (any_marginal ? "marginal" : "safe");
+        summary.worst_margin_mm = worst_margin == std::numeric_limits<double>::max() ? 0.0 : worst_margin;
+        if (any_failing) {
+            analysis.overall_risk_level = "high_risk";
+            analysis.warnings.push_back({"LDM_SUPPORT_MARGIN_FAILING", "high", "support_margin",
+                L("LDM Vase Plus measured an unsupported outward step beyond the process envelope; the wall is expected to sag or fail there."),
+                Slic3r::format("worst_margin_mm=%.3f at z=%.2f", summary.worst_margin_mm, worst_z),
+                worst_z});
+        } else if (any_marginal) {
+            analysis.warnings.push_back({"LDM_SUPPORT_MARGIN_MARGINAL", "medium", "support_margin",
+                L("LDM Vase Plus measured an unsupported outward step close to the process envelope; consider slowing down or reducing the overhang."),
+                Slic3r::format("worst_margin_mm=%.3f at z=%.2f", summary.worst_margin_mm, worst_z),
+                worst_z});
+        }
+    }
+
+    // ---- Turn-radius check (docs/clay-rules-knowledge-base.md; Codex-lab
+    // _check_turn_radius analog) ----
+    // Tight in-plane turns (including sharp corners) concentrate stress and
+    // can tear or over-thin on the inside of the curve. Each layer's outer
+    // wall is resampled at the same arc-length step as the B2 field above,
+    // then the circumradius of each consecutive sample triple is measured;
+    // the tightest one found anywhere is compared against the configured
+    // minimum.
+    if (m_config.ldm_min_turn_radius_mm.value > EPSILON) {
+        double worst_turn_radius_mm = std::numeric_limits<double>::max();
+        double worst_turn_z = -1.0;
+        bool   any_turn_sample = false;
+        for (int i = 0; i < int(object_layers.size()); ++ i) {
+            const Layer *layer = object_layers[i];
+            std::vector<Vec2d> wall = outer_wall_points_mm(layer);
+            if (wall.size() < 3)
+                continue;
+            double total = 0.;
+            for (size_t k = 0; k < wall.size(); ++ k)
+                total += (wall[(k + 1) % wall.size()] - wall[k]).norm();
+            if (total < 1e-6)
+                continue;
+            const int n_samples = std::max(int(total / sample_step), 8);
+            std::vector<Vec2d> samples;
+            samples.reserve(n_samples);
+            double target = 0., walked = 0.;
+            size_t k = 0;
+            double seg_len = (wall[1 % wall.size()] - wall[0]).norm();
+            for (int s = 0; s < n_samples; ++ s, target = total * s / n_samples) {
+                while (walked + seg_len < target && k + 1 < wall.size() * 2) {
+                    walked += seg_len;
+                    ++ k;
+                    seg_len = (wall[(k + 1) % wall.size()] - wall[k % wall.size()]).norm();
+                }
+                const Vec2d &a = wall[k % wall.size()];
+                const Vec2d &b = wall[(k + 1) % wall.size()];
+                const double frac = seg_len > 1e-12 ? std::clamp((target - walked) / seg_len, 0.0, 1.0) : 0.0;
+                samples.push_back(a + frac * (b - a));
+            }
+            const int n = int(samples.size());
+            for (int s = 0; s < n; ++ s) {
+                const Vec2d &p0 = samples[(s + n - 1) % n];
+                const Vec2d &p1 = samples[s];
+                const Vec2d &p2 = samples[(s + 1) % n];
+                const double a_len = (p1 - p0).norm();
+                const double b_len = (p2 - p1).norm();
+                const double c_len = (p2 - p0).norm();
+                const double cross_mag = std::abs((p1.x() - p0.x()) * (p2.y() - p0.y()) - (p2.x() - p0.x()) * (p1.y() - p0.y()));
+                if (cross_mag < 1e-9)
+                    continue; // near-collinear: effectively straight, not a turn
+                const double radius = (a_len * b_len * c_len) / (2.0 * cross_mag);
+                any_turn_sample = true;
+                if (radius < worst_turn_radius_mm) {
+                    worst_turn_radius_mm = radius;
+                    worst_turn_z = layer->print_z;
+                }
+            }
+        }
+        if (any_turn_sample && worst_turn_radius_mm < m_config.ldm_min_turn_radius_mm.value) {
+            analysis.warnings.push_back({"LDM_TURN_RADIUS_TIGHT", "medium", "turn_radius",
+                L("LDM Vase Plus measured a tighter in-plane turn than the configured minimum radius; the inside of the curve may tear or over-thin."),
+                Slic3r::format("worst_turn_radius_mm=%.3f at z=%.2f", worst_turn_radius_mm, worst_turn_z),
+                worst_turn_z});
+        }
+    }
+
+    // ---- Shared per-layer geometry (reservoir + stability screening) ----
+    // Volumes: perimeters + fills; thin_fills are copied into fills during
+    // infill generation, so counting both would double-count. Skirt/brim and
+    // support are not included - slightly optimistic, errs toward warning
+    // early enough.
+    struct LdmLayerGeom {
+        double z { 0. };
+        double volume_mm3 { 0. };
+        double perim_m { 0. };
+        double r_mean_m { 0. };
+        double r_flat_m { 0. };
+        Vec2d  centroid_m { 0., 0. };
+        bool   has_wall { false };
+    };
+    std::vector<LdmLayerGeom> layer_geom;
+    layer_geom.reserve(object_layers.size());
+    for (const Layer *layer : object_layers) {
+        LdmLayerGeom geom;
+        geom.z = layer->print_z;
+        for (const LayerRegion *layerm : layer->regions())
+            geom.volume_mm3 += layerm->perimeters.total_volume() + layerm->fills.total_volume();
+        std::vector<Vec2d> wall = outer_wall_points_mm(layer);
+        if (wall.size() >= 3) { // a square base wall has 4 points; match B2's threshold
+            geom.has_wall = true;
+            const size_t n = wall.size();
+            double perim_mm = 0.;
+            Vec2d  centroid_mm(0., 0.);
+            for (size_t k = 0; k < n; ++ k) {
+                const Vec2d &a = wall[k];
+                const Vec2d &b = wall[(k + 1) % n];
+                const double len = (b - a).norm();
+                perim_mm += len;
+                centroid_mm += 0.5 * (a + b) * len;
+            }
+            if (perim_mm > EPSILON)
+                centroid_mm /= perim_mm;
+            geom.perim_m = perim_mm * 1e-3;
+            geom.centroid_m = centroid_mm * 1e-3;
+            double r_sum = 0.;
+            for (const Vec2d &p : wall)
+                r_sum += (p - centroid_mm).norm();
+            geom.r_mean_m = (r_sum / double(n)) * 1e-3;
+            // Flattest 10% of spans drive shell buckling (folds are
+            // corrugation and stiffen): p90 of the local circumradius on a
+            // coarse resampling, capped at 4x the overall loop radius.
+            {
+                const int    grid_n = 128;
+                std::vector<Vec2d> rs(grid_n);
+                std::vector<double> arc(n + 1, 0.);
+                for (size_t k = 0; k < n; ++ k)
+                    arc[k + 1] = arc[k] + (wall[(k + 1) % n] - wall[k]).norm();
+                const double total = std::max(arc[n], 1e-9);
+                size_t seg = 0;
+                for (int s = 0; s < grid_n; ++ s) {
+                    const double target = total * s / grid_n;
+                    while (seg + 1 < n && arc[seg + 1] < target)
+                        ++ seg;
+                    const double seg_len = std::max(arc[seg + 1] - arc[seg], 1e-9);
+                    const double frac = std::clamp((target - arc[seg]) / seg_len, 0.0, 1.0);
+                    rs[s] = wall[seg] + frac * (wall[(seg + 1) % n] - wall[seg]);
+                }
+                std::vector<double> radii(grid_n);
+                const double cap_mm = 4.0 * geom.r_mean_m * 1e3;
+                for (int s = 0; s < grid_n; ++ s) {
+                    const Vec2d &a = rs[s];
+                    const Vec2d &b = rs[(s + 1) % grid_n];
+                    const Vec2d &c = rs[(s + 2) % grid_n];
+                    const double cross = std::abs((b - a).x() * (c - a).y() - (b - a).y() * (c - a).x());
+                    double radius = cap_mm;
+                    if (cross > 1e-9)
+                        radius = std::min(cap_mm, (b - a).norm() * (c - b).norm() * (a - c).norm() / (2.0 * cross));
+                    radii[s] = radius;
+                }
+                std::nth_element(radii.begin(), radii.begin() + (grid_n * 9) / 10, radii.end());
+                geom.r_flat_m = radii[(grid_n * 9) / 10] * 1e-3;
+            }
+        }
+        layer_geom.push_back(geom);
+    }
+
+    // ---- Reservoir capacity check ----
+    const double reservoir_ml = m_config.ldm_reservoir_volume_ml.value;
+    if (reservoir_ml > EPSILON) {
+        // Track B5 stopgap: a declared current fill (e.g. from the printer's
+        // LDM_RESERVOIR_STATUS macro) replaces the fresh-full-load assumption
+        // until the Device tab can query it live over Moonraker.
+        const double current_ml = m_config.ldm_reservoir_current_ml.value;
+        const bool   partial_load = current_ml > EPSILON && current_ml < reservoir_ml;
+        const double available_ml = partial_load ? current_ml : reservoir_ml;
+        const double capacity_mm3 = available_ml * 1000.0;
+        double cumulative_mm3 = 0.0;
+        double runs_dry_z = -1.0;
+        for (const LdmLayerGeom &geom : layer_geom) {
+            cumulative_mm3 += geom.volume_mm3;
+            if (runs_dry_z < 0. && cumulative_mm3 > capacity_mm3)
+                runs_dry_z = geom.z;
+        }
+        if (runs_dry_z >= 0.) {
+            analysis.warnings.push_back({"LDM_RESERVOIR_REFILL", "high", "reservoir",
+                partial_load
+                    ? L("This print needs more material than is left in the current reservoir load; plan a refill before the indicated height.")
+                    : L("This print needs more material than the reservoir holds; plan a refill before the indicated height."),
+                partial_load
+                    ? Slic3r::format("print_volume_ml=%.0f, current_ml=%.0f, reservoir_ml=%.0f, runs_dry_at_z=%.1f",
+                          cumulative_mm3 / 1000.0, current_ml, reservoir_ml, runs_dry_z)
+                    : Slic3r::format("print_volume_ml=%.0f, reservoir_ml=%.0f, runs_dry_at_z=%.1f",
+                          cumulative_mm3 / 1000.0, reservoir_ml, runs_dry_z),
+                runs_dry_z});
+            if (analysis.overall_risk_level != "high_risk")
+                analysis.overall_risk_level = "guarded";
+        }
+    }
+
+    // ---- Bead-compression ratio check (docs/clay-rules-knowledge-base.md
+    // rule 2: wall_thickness_over_layer_height) ----
+    // Layer height should stay a conservative fraction of bead width so
+    // each bead compresses and keys into the one below; too high risks
+    // poor interlayer adhesion, too low risks over-compressing the bead.
+    if (m_config.ldm_nominal_bead_width_mm.value > EPSILON) {
+        double step_sum = 0.0;
+        int    step_count = 0;
+        double prev_z = 0.0;
+        bool   have_prev = false;
+        for (const LdmLayerGeom &geom : layer_geom) {
+            if (!geom.has_wall)
+                continue;
+            if (have_prev) {
+                step_sum += std::max(0.01, geom.z - prev_z);
+                ++ step_count;
+            }
+            prev_z = geom.z;
+            have_prev = true;
+        }
+        if (step_count > 0) {
+            const double mean_step = step_sum / step_count;
+            const double ratio = mean_step / m_config.ldm_nominal_bead_width_mm.value;
+            if (ratio > 0.42) {
+                analysis.warnings.push_back({"LDM_BEAD_COMPRESSION_LOW", "medium", "wall_thickness",
+                    L("Mean effective layer height is high relative to the nominal bead width; beads may not key well into the layer below."),
+                    Slic3r::format("mean_effective_layer_height_mm=%.3f, ratio=%.3f", mean_step, ratio),
+                    -1.0});
+            } else if (ratio < 0.15) {
+                analysis.warnings.push_back({"LDM_BEAD_COMPRESSION_HIGH", "medium", "wall_thickness",
+                    L("Mean effective layer height is very low relative to the nominal bead width; the bead may be over-compressed."),
+                    Slic3r::format("mean_effective_layer_height_mm=%.3f, ratio=%.3f", mean_step, ratio),
+                    -1.0});
+            }
+        }
+    }
+
+    // ---- B4 Tier-1 self-weight stability screening ----
+    // Conservative (no strength-gain time credit). Requires declared material
+    // properties and the nominal bead; parameters default to 0 = off until
+    // the Track D calibration prints measure them.
+    {
+        constexpr double g = 9.81;
+        constexpr double buckle_knockdown = 0.3; // of the classical 0.605 E t/R
+        constexpr double flag_at = 0.8;          // utilization that triggers a warning
+        const double density = m_config.filament_density.values.empty() ? 0.0 : m_config.filament_density.values.front() * 1000.0; // g/cm3 -> kg/m3
+        const double sigma_y = m_config.ldm_wet_yield_strength.values.empty() ? 0.0 : m_config.ldm_wet_yield_strength.values.front() * 1000.0; // kPa -> Pa
+        const double e_mod   = m_config.ldm_e_modulus.values.empty() ? 0.0 : m_config.ldm_e_modulus.values.front() * 1000.0; // kPa -> Pa
+        const double bead_m  = m_config.ldm_nominal_bead_width_mm.value * 1e-3;
+        auto &stab = analysis.stability;
+        if (density > EPSILON && sigma_y > EPSILON && bead_m > EPSILON && layer_geom.size() > 2) {
+            stab.evaluated = true;
+            const int n_layers = int(layer_geom.size());
+            std::vector<double> mass(n_layers);
+            for (int i = 0; i < n_layers; ++ i)
+                mass[i] = layer_geom[i].volume_mm3 * 1e-9 * density; // kg
+            // suffix sums of mass and mass-weighted centroid above each level
+            double m_above = 0.;
+            Vec2d  m_centroid(0., 0.);
+            const double top_z = layer_geom.back().z;
+            for (int j = n_layers - 1; j >= 0; -- j) {
+                if (j + 1 < n_layers) {
+                    m_above += mass[j + 1];
+                    m_centroid += mass[j + 1] * layer_geom[j + 1].centroid_m;
+                }
+                const LdmLayerGeom &lg = layer_geom[j];
+                if (!lg.has_wall || lg.perim_m < EPSILON || m_above < 1e-9)
+                    continue;
+                const double sigma = g * m_above / (lg.perim_m * bead_m);
+                const double squash = sigma / sigma_y;
+                if (squash > stab.squash_ratio) {
+                    stab.squash_ratio = squash;
+                    if (squash >= stab.buckle_ratio && squash >= stab.cantilever_ratio && squash >= flag_at) {
+                        stab.predicted_mode = "squash";
+                        stab.failing_z_mm = lg.z;
+                    }
+                }
+                if (e_mod > EPSILON && lg.r_flat_m > EPSILON) {
+                    const double free_h = (top_z - lg.z) * 1e-3;
+                    const double wavelength = 4.0 * std::sqrt(lg.r_flat_m * bead_m);
+                    if (free_h >= wavelength) {
+                        const double sigma_cr = buckle_knockdown * 0.605 * e_mod * bead_m / lg.r_flat_m;
+                        const double buckle = sigma / std::max(sigma_cr, 1e-9);
+                        if (buckle > stab.buckle_ratio) {
+                            stab.buckle_ratio = buckle;
+                            if (buckle >= stab.squash_ratio && buckle >= stab.cantilever_ratio && buckle >= flag_at) {
+                                stab.predicted_mode = "buckle";
+                                stab.failing_z_mm = lg.z;
+                            }
+                        }
+                    }
+                }
+                const Vec2d centroid_above = m_centroid / m_above;
+                const double offset = (centroid_above - lg.centroid_m).norm();
+                const double overturn = g * m_above * offset;
+                const double resist = sigma_y * lg.perim_m * bead_m * std::max(lg.r_mean_m, 1e-9);
+                const double cantilever = overturn / std::max(resist, 1e-9);
+                if (cantilever > stab.cantilever_ratio) {
+                    stab.cantilever_ratio = cantilever;
+                    if (cantilever >= stab.squash_ratio && cantilever >= stab.buckle_ratio && cantilever >= flag_at) {
+                        stab.predicted_mode = "cantilever";
+                        stab.failing_z_mm = lg.z;
+                    }
+                }
+            }
+            struct { const char *code; const char *mode; double ratio; } modes[] = {
+                {"LDM_STABILITY_SQUASH",     "squash",     stab.squash_ratio},
+                {"LDM_STABILITY_BUCKLE",     "buckle",     stab.buckle_ratio},
+                {"LDM_STABILITY_CANTILEVER", "cantilever", stab.cantilever_ratio},
+            };
+            for (const auto &m : modes) {
+                if (m.ratio < flag_at)
+                    continue;
+                const bool over = m.ratio >= 1.0;
+                analysis.warnings.push_back({m.code, over ? "high" : "medium", "stability",
+                    over ? L("LDM stability screening predicts collapse under self-weight (conservative, no drying credit).")
+                         : L("LDM stability screening is close to the self-weight limit (conservative, no drying credit)."),
+                    Slic3r::format("mode=%s, utilization=%.2f, at_z=%.1f", m.mode, m.ratio, stab.failing_z_mm),
+                    stab.failing_z_mm});
+                if (over)
+                    analysis.overall_risk_level = "high_risk";
+                else if (analysis.overall_risk_level != "high_risk")
+                    analysis.overall_risk_level = "guarded";
+            }
+        }
+    }
+}
+
 StringObjectException Print::validate(std::vector<StringObjectException> *warnings, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
 {
     auto add_warning = [warnings](StringObjectException w) {
@@ -1277,6 +2061,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
         w.object  = object;
         add_warning(std::move(w));
     };
+    m_clay_vase_plus_analysis = ClayVasePlusAnalysisResult{};
 
     std::vector<unsigned int> extruders = this->extruders();
     unsigned int nozzles = m_config.nozzle_diameter.size();
@@ -1359,6 +2144,8 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
             }
         }
     }
+
+    this->update_clay_vase_plus_analysis(warnings);
 
     // Cache of layer height profiles for checking:
     // 1) Whether all layers are synchronized if printing with wipe tower and / or unsynchronized supports.
@@ -2629,6 +3416,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
             BOOST_LOG_TRIVIAL(error) << boost::format("gcode path conflicts found between %1% and %2%")%conflictRes.value()._objName1 %conflictRes.value()._objName2;
         }
     }
+
+    this->update_clay_body_continuity_analysis();
 
     BOOST_LOG_TRIVIAL(info) << "Slicing process finished." << log_memory_info();
 }

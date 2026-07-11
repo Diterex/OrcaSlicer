@@ -1009,6 +1009,10 @@ static std::vector<std::string> s_Preset_print_options{
     "alternate_extra_wall",
     "slice_closing_radius",
     "spiral_mode",
+    // Clay fork: LDM Vase Plus analysis parameters.
+    "ldm_nominal_bead_width_mm", "ldm_nominal_layer_height_mm", "ldm_max_unsupported_step_mm",
+    "ldm_min_turn_radius_mm", "ldm_reservoir_current_ml",
+    "ldm_continuous_path_required", "ldm_disable_retracts", "ldm_disable_z_hop",
     "spiral_mode_smooth",
     "spiral_mode_max_xy_smoothing",
     "spiral_starting_flow_ratio",
@@ -1321,7 +1325,7 @@ static std::vector<std::string> s_Preset_print_options{
 static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", */ "default_filament_colour", "required_nozzle_HRC", "filament_diameter", "pellet_flow_coefficient", "volumetric_speed_coefficients", "filament_type",
                                                           "filament_soluble", "filament_is_support", "filament_printable",
     "filament_max_volumetric_speed", "filament_adaptive_volumetric_speed",
-    "filament_flow_ratio", "filament_density", "filament_adhesiveness_category", "filament_cost", "filament_minimal_purge_on_wipe_tower",
+    "filament_flow_ratio", "filament_density", "ldm_wet_yield_strength", "ldm_e_modulus", "filament_adhesiveness_category", "filament_cost", "filament_minimal_purge_on_wipe_tower",
     "filament_tower_interface_pre_extrusion_dist", "filament_tower_interface_pre_extrusion_length", "filament_tower_ironing_area", "filament_tower_interface_purge_volume",
     "filament_tower_interface_print_temp",
     "nozzle_temperature", "nozzle_temperature_initial_layer",
@@ -1373,6 +1377,9 @@ static std::vector<std::string> s_Preset_machine_limits_options {
 
 static std::vector<std::string> s_Preset_printer_options {
     "printer_technology",
+    // Clay fork: machine identity + startup handling.
+    "ldm_modded_printer", "ldm_feed_type", "ldm_ram_mix_factor", "ldm_reservoir_volume_ml",
+    "ldm_tip_cone_angle", "ldm_tip_cone_length", "ldm_tip_top_diameter", "ldm_start_gcode_mode",
     "printable_area", "extruder_printable_area", "support_parallel_printheads", "parallel_printheads_count", "parallel_printheads_bed_exclude_areas", "bed_exclude_area","bed_custom_texture", "bed_custom_model", "gcode_flavor",
     "fan_kickstart", "part_cooling_fan_min_pwm", "fan_speedup_time", "fan_speedup_overhangs",
     "single_extruder_multi_material", "manual_filament_change", "file_start_gcode", "machine_start_gcode", "machine_end_gcode", "before_layer_change_gcode", "printing_by_object_gcode", "layer_change_gcode", "time_lapse_gcode", "wrapping_detection_gcode", "change_filament_gcode", "change_extrusion_role_gcode",

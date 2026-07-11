@@ -20,8 +20,10 @@
 #include "test_utils.hpp"
 
 #include <algorithm>
+#include <boost/filesystem.hpp>
 #include <fstream>
 #include <iterator>
+#include "nlohmann/json.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -417,4 +419,390 @@ TEST_CASE("Sequential printing follows model order", "[Print]")
     });
 
     REQUIRE_THAT(first_object_peak_z, Catch::Matchers::WithinAbs(20.0, 0.3));
+}
+
+TEST_CASE("Print::validate records LDM Vase Plus startup and motion warnings", "[Print][validate][ClayVasePlus]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("ldm_modded_printer", new ConfigOptionBool(true));
+    config.set_key_value("ldm_disable_retracts", new ConfigOptionBool(true));
+    config.set_key_value("ldm_disable_z_hop", new ConfigOptionBool(true));
+    config.set_key_value("retraction_length", new ConfigOptionFloats{ 1.5 });
+    config.set_key_value("z_hop", new ConfigOptionFloats{ 0.8 });
+    config.set_key_value("machine_start_gcode", new ConfigOptionString("G28\nG1 E-1.25 F300\nG1 X97.123 Y4.5 E6.75 F812\n"));
+
+    Slic3r::Model model;
+    Slic3r::Print print;
+    build_cubes(model, print, config, /*n=*/1, /*overlap=*/false);
+
+    std::vector<StringObjectException> warnings;
+    StringObjectException err = print.validate(&warnings);
+
+    CHECK(err.string.empty());
+    CHECK(count_opt_key(warnings, "spiral_mode") == 1);
+    CHECK(count_opt_key(warnings, "retraction_length") == 1);
+    CHECK(count_opt_key(warnings, "z_hop") == 1);
+    CHECK(count_opt_key(warnings, "machine_start_gcode") == 2);
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.overall_risk_level == "high_risk");
+    CHECK(analysis.startup_compatibility.startup_retract_risk);
+    CHECK(analysis.startup_compatibility.purge_like_start_detected);
+    CHECK(analysis.metric_snapshot.max_retraction_length_mm == Catch::Approx(1.5));
+    CHECK(analysis.metric_snapshot.max_z_hop_mm == Catch::Approx(0.8));
+    CHECK(analysis.warnings.size() >= 4);
+}
+
+TEST_CASE("LDM Vase Plus body continuity classifies a plain cube as clean control", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.risk_distribution_mode == "clean_control");
+    CHECK_FALSE(analysis.body_fragmentation_zone.detected);
+}
+
+TEST_CASE("LDM Vase Plus body continuity does not false-flag a gapless cube", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // A plain cube produces no gap fill at all; with the clay bead declared
+    // the narrow-gap metric must stay quiet, and config-level retract
+    // warnings from validate() must not leak into the geometric
+    // classification. (The positive path for base rescue is covered by the
+    // julia_mop_clay case in the CI trust gate, which slices real geometry.)
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 }
+    });
+    std::vector<StringObjectException> warnings;
+    print.validate(&warnings); // sets config-level base_rescue state
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK_FALSE(analysis.base_rescue_complexity.has_gap_infill);
+    CHECK(analysis.base_rescue_complexity.level == "none");
+    CHECK(analysis.risk_distribution_mode == "clean_control");
+}
+
+TEST_CASE("LDM Vase Plus body continuity detects a fragmentation zone on a sphere", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    // The lower hemisphere produces sustained overhang-wall paths.
+    CHECK(analysis.body_fragmentation_zone.detected);
+    CHECK(analysis.body_fragmentation_zone.peak_overhang_wall_sections >= 1);
+    const bool body_mode = analysis.risk_distribution_mode == "body_spread" || analysis.risk_distribution_mode == "mixed";
+    CHECK(body_mode);
+    CHECK(analysis.overall_risk_level == "high_risk");
+}
+
+TEST_CASE("LDM Vase Plus support margin: vertical walls are safe", "[Print][ClayVasePlus][SupportMargin]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.support_margin_field.empty());
+    CHECK(analysis.support_margin_summary.status == "safe");
+    CHECK(analysis.support_margin_summary.worst_margin_mm > 0.0);
+}
+
+TEST_CASE("LDM Vase Plus support margin: a 45 degree wall fails the 40 degree envelope", "[Print][ClayVasePlus][SupportMargin]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.support_margin_field.empty());
+    CHECK(analysis.support_margin_summary.status == "failing");
+    CHECK(analysis.support_margin_summary.worst_margin_mm < 0.0);
+    CHECK(analysis.support_margin_summary.first_warning_z_mm > 0.0);
+}
+
+TEST_CASE("LDM Vase Plus support margin: explicit step override wins", "[Print][ClayVasePlus][SupportMargin]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 5 mm admissible step makes the 45 degree chamfer trivially safe.
+    Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_max_unsupported_step_mm", 5.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.support_margin_field.empty());
+    CHECK(analysis.support_margin_summary.status == "safe");
+}
+
+TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exceeded", "[Print][ClayVasePlus][Reservoir]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // A 20mm cube extrudes far more than 1 ml; the check must fire and
+    // report the height where the reservoir runs dry.
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_reservoir_volume_ml", 1.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_RESERVOIR_REFILL"; });
+    REQUIRE(refill != analysis.warnings.end());
+    CHECK(refill->z_hint_mm > 0.0);
+    CHECK(refill->z_hint_mm <= 20.0);
+}
+
+TEST_CASE("LDM bead compression check flags a high ratio when the nominal bead is absurdly narrow", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // ldm_nominal_bead_width_mm is informational only (does not change the
+    // real slicer extrusion width - see its tooltip), so drive the ratio to
+    // an extreme via the bead width alone rather than layer_height: an
+    // explicit layer_height incompatible with the default nozzle/extrusion
+    // width previously made Flow::spacing() go negative and throw. A bead
+    // this narrow guarantees mean_layer_height / bead_width > 0.42 no
+    // matter what the default layer height actually is.
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 0.02 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_BEAD_COMPRESSION_LOW"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "medium");
+}
+
+TEST_CASE("LDM bead compression check flags a low ratio when the nominal bead is absurdly wide", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // Mirror of the above: a bead this wide guarantees
+    // mean_layer_height / bead_width < 0.15 regardless of the default
+    // layer height, without touching layer_height itself.
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 50.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_BEAD_COMPRESSION_HIGH"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "medium");
+}
+
+TEST_CASE("LDM reservoir check uses the declared current fill instead of assuming full", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // A 1000 mL reservoir never runs dry on a 20mm cube, but a declared
+    // 1 mL remaining in the current load must trigger the refill warning
+    // (Track B5 stopgap for the Klipper LDM_RESERVOIR_STATUS macro).
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_reservoir_volume_ml", 1000.0 },
+        { "ldm_reservoir_current_ml", 1.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_RESERVOIR_REFILL"; });
+    REQUIRE(refill != analysis.warnings.end());
+    CHECK(refill->z_hint_mm > 0.0);
+    CHECK(refill->z_hint_mm <= 20.0);
+    CHECK_THAT(refill->metric, Catch::Matchers::ContainsSubstring("current_ml=1"));
+}
+
+TEST_CASE("LDM reservoir check still assumes a full load when no current fill is declared", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_reservoir_volume_ml", 1000.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_RESERVOIR_REFILL"; });
+    CHECK(refill == analysis.warnings.end());
+}
+
+TEST_CASE("LDM turn-radius check stays off without a configured minimum radius", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // ldm_min_turn_radius_mm left at its default (0 = disabled).
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_TURN_RADIUS_TIGHT"; });
+    CHECK(warn == analysis.warnings.end());
+}
+
+TEST_CASE("LDM turn-radius check flags a tight turn for an absurdly large minimum radius", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 1000mm is far beyond any turn radius a 20mm cube can offer, so this
+    // guarantees the check fires regardless of exact corner curvature math.
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 },
+        { "ldm_min_turn_radius_mm", 1000.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_TURN_RADIUS_TIGHT"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "medium");
+}
+
+TEST_CASE("LDM Vase Plus clay-native startup strips purge-like start lines", "[Print][ClayVasePlus]")
+{
+    // Moved from the now-removed test_printgcode.cpp during the 2026-07-11
+    // upstream rebase (test suite reorganization); unchanged otherwise.
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "layer_height",               0.2 },
+        { "initial_layer_print_height", 0.2 },
+        { "initial_layer_line_width",   0 },
+        { "gcode_comments",             true },
+        { "ldm_modded_printer",               true },
+        { "ldm_start_gcode_mode",      "clay_native" },
+        { "machine_start_gcode",        "G28\nG1 E-1.25 F300\nG1 X97.123 Y4.5 E6.75 F812\nM117 clay\n" },
+        { "z_hop",                      0 }
+    });
+
+    std::string gcode = Slic3r::Test::gcode(print);
+
+    REQUIRE(gcode.find("; LDM Vase Plus removed startup line: G1 E-1.25 F300") != std::string::npos);
+    REQUIRE(gcode.find("; LDM Vase Plus removed startup line: G1 X97.123 Y4.5 E6.75 F812") != std::string::npos);
+    REQUIRE(gcode.find("\nG1 E-1.25 F300\n") == std::string::npos);
+    REQUIRE(gcode.find("\nG1 X97.123 Y4.5 E6.75 F812\n") == std::string::npos);
+    REQUIRE(gcode.find("M117 clay") != std::string::npos);
+}
+
+TEST_CASE("LDM Vase Plus writes an analysis sidecar next to exported G-code", "[Print][ClayVasePlus]")
+{
+    // Moved from the now-removed test_printgcode.cpp during the 2026-07-11
+    // upstream rebase (test suite reorganization); unchanged otherwise.
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer",               true }
+    });
+    print.set_status_silent();
+    print.process();
+
+    boost::filesystem::path gcode_path =
+        boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("clay-sidecar-%%%%%%%%.gcode");
+    print.export_gcode(gcode_path.string(), nullptr, nullptr);
+    boost::filesystem::path sidecar = gcode_path;
+    sidecar += ".ldm-analysis.json";
+
+    REQUIRE(boost::filesystem::exists(sidecar));
+    std::ifstream sidecar_stream(sidecar.string());
+    nlohmann::json j = nlohmann::json::parse(sidecar_stream);
+    CHECK(j["ldm_active"] == true);
+    CHECK(j["support_margin_summary"]["status"] == "safe");
+    CHECK(j["support_margin_field"].size() > 0);
+
+    boost::filesystem::remove(gcode_path);
+    boost::filesystem::remove(sidecar);
+}
+
+TEST_CASE("LDM stability screening stays off without declared material properties", "[Print][ClayVasePlus][Stability]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 }
+        // density / yield / modulus left at defaults (0) -> screening off
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK_FALSE(analysis.stability.evaluated);
+    CHECK(analysis.stability.predicted_mode == "stable");
+}
+
+TEST_CASE("LDM stability screening flags squash for an absurdly weak material", "[Print][ClayVasePlus][Stability]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 5 g/cm3 paste with 0.01 kPa yield: a 20mm cube must exceed the squash
+    // limit (sigma = rho*g*h ~ 981 Pa vs 10 Pa capacity).
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 },
+        { "filament_density", "5" },
+        { "ldm_wet_yield_strength", "0.01" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE(analysis.stability.evaluated);
+    CHECK(analysis.stability.squash_ratio > 1.0);
+    CHECK(analysis.stability.predicted_mode == "squash");
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_STABILITY_SQUASH"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "high");
+}
+
+TEST_CASE("LDM Vase Plus body continuity stays inert when clay mode is off", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model);
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK_FALSE(analysis.clay_mode_active);
+    CHECK_FALSE(analysis.body_fragmentation_zone.detected);
+    CHECK(analysis.warnings.empty());
 }
