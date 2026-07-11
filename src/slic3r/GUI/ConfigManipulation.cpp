@@ -632,6 +632,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     // Clay fork: LDM analysis parameters only apply on an LDM machine.
     const bool is_ldm_printer = preset_bundle->printers.get_edited_preset().config.opt_bool("ldm_modded_printer");
     for (auto el : {"ldm_nominal_bead_width_mm", "ldm_nominal_layer_height_mm", "ldm_max_unsupported_step_mm",
+                    "ldm_min_turn_radius_mm",
                     "ldm_continuous_path_required", "ldm_disable_retracts", "ldm_disable_z_hop"})
         toggle_field(el, is_ldm_printer);
 

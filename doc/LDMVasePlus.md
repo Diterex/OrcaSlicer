@@ -267,6 +267,23 @@ The admissible horizontal step of one wall loop past the loop below.
 Loops stepping beyond this are `failing` and produce
 `LDM_SUPPORT_MARGIN_FAILING` with the worst Z.
 
+### LDM min turn radius
+
+`ldm_min_turn_radius_mm` (default 0 = disabled)
+
+The tightest in-plane turn radius LDM Vase Plus expects the wall to hold,
+measured per layer by resampling the outer wall loop at the same
+arc-length step as the support-margin field and taking the circumradius
+of each consecutive sample triple.
+
+- **0 (default):** check disabled.
+- **> 0:** any measured radius tighter than this — including sharp
+  corners, which read as a very small radius — produces
+  `LDM_TURN_RADIUS_TIGHT` with the worst Z. Deliberate sharp corners in a
+  vase profile are a genuine clay-printing risk (thinning/tearing on the
+  inside of the turn), not just a false positive; fillet the profile or
+  raise the threshold if the design intends them.
+
 ### Require continuous LDM path
 
 `ldm_continuous_path_required` (default on)
@@ -321,6 +338,7 @@ continuity and leave witness marks in soft material.
 | `LDM_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
 | `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
 | `LDM_BEAD_COMPRESSION_LOW` / `LDM_BEAD_COMPRESSION_HIGH` | Mean effective layer height vs. `ldm_nominal_bead_width_mm` ratio is outside the safe keying band (too high: poor interlayer keying; too low: over-compressed bead) |
+| `LDM_TURN_RADIUS_TIGHT` | Measured in-plane turn radius (incl. sharp corners) below `ldm_min_turn_radius_mm`, with the worst Z |
 
 ### In-app risk panel (G-code preview)
 
@@ -401,12 +419,13 @@ and verification evidence.
   (fork-hosted docs) in addition to upstream wiki paths.
 
 **Tests & CI**
-- 16 LDM unit tests in `tests/fff_print/` (config warnings, startup
+- 18 LDM unit tests in `tests/fff_print/` (config warnings, startup
   sanitizing, continuity classification incl. false-positive guards,
   support margin on known geometry — a plain cube must be `safe`, a 45°
   chamfer must be `failing` under the 40° envelope, an explicit step
   override must win — sidecar existence/contents, reservoir refill
-  warning, bead-compression ratio at both ends of the safe band).
+  warning, bead-compression ratio at both ends of the safe band, turn-
+  radius disabled-by-default and tight-turn-flagged).
 - `.github/workflows/clay-ci.yml`: Linux build + full upstream suite;
   **Windows x64 portable build** every push (published to the rolling
   `ldm-dev-latest` release); compiler caching; the **trust gate** —
@@ -441,6 +460,15 @@ knowledge-base rule `wall_thickness_over_layer_height` (see
 `docs/clay-rules-knowledge-base.md` rule 2 in the project repo) — this
 was flagged as a partial gap and is the first of the two checks proposed
 in the Codex-lab integration plan's §6.2.
+
+**New check (2026-07-11)**: `LDM_TURN_RADIUS_TIGHT` — new
+`ldm_min_turn_radius_mm` setting (default 0 = disabled); flags the
+tightest measured in-plane wall-loop turn radius per layer (circumradius
+of arc-length-resampled sample triples, same sampling cadence as the B2
+support-margin field) against the configured minimum. The second of the
+two checks proposed in the Codex-lab integration plan's §6.2, modeled on
+that lab's `_check_turn_radius` but measured from the actual sliced wall
+loop rather than the parametric input surface.
 
 **Not in this build (by design, next phases):** no toolpath correction,
 no in-viewport risk overlay (warnings + sidecar only), thresholds not

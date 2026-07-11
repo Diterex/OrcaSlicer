@@ -538,6 +538,43 @@ TEST_CASE("LDM bead compression check flags a low ratio when layer height is sma
     CHECK(warn->severity == "medium");
 }
 
+TEST_CASE("LDM turn-radius check stays off without a configured minimum radius", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // ldm_min_turn_radius_mm left at its default (0 = disabled).
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_TURN_RADIUS_TIGHT"; });
+    CHECK(warn == analysis.warnings.end());
+}
+
+TEST_CASE("LDM turn-radius check flags a tight turn for an absurdly large minimum radius", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 1000mm is far beyond any turn radius a 20mm cube can offer, so this
+    // guarantees the check fires regardless of exact corner curvature math.
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 },
+        { "ldm_min_turn_radius_mm", 1000.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_TURN_RADIUS_TIGHT"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "medium");
+}
+
 TEST_CASE("LDM stability screening stays off without declared material properties", "[Print][ClayVasePlus][Stability]")
 {
     Slic3r::Print print;

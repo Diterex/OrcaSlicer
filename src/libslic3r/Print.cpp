@@ -1738,6 +1738,72 @@ void Print::update_clay_body_continuity_analysis() const
         }
     }
 
+    // ---- Turn-radius check (docs/clay-rules-knowledge-base.md; Codex-lab
+    // _check_turn_radius analog) ----
+    // Tight in-plane turns (including sharp corners) concentrate stress and
+    // can tear or over-thin on the inside of the curve. Each layer's outer
+    // wall is resampled at the same arc-length step as the B2 field above,
+    // then the circumradius of each consecutive sample triple is measured;
+    // the tightest one found anywhere is compared against the configured
+    // minimum.
+    if (m_config.ldm_min_turn_radius_mm.value > EPSILON) {
+        double worst_turn_radius_mm = std::numeric_limits<double>::max();
+        double worst_turn_z = -1.0;
+        bool   any_turn_sample = false;
+        for (int i = 0; i < int(object_layers.size()); ++ i) {
+            const Layer *layer = object_layers[i];
+            std::vector<Vec2d> wall = outer_wall_points_mm(layer);
+            if (wall.size() < 3)
+                continue;
+            double total = 0.;
+            for (size_t k = 0; k < wall.size(); ++ k)
+                total += (wall[(k + 1) % wall.size()] - wall[k]).norm();
+            if (total < 1e-6)
+                continue;
+            const int n_samples = std::max(int(total / sample_step), 8);
+            std::vector<Vec2d> samples;
+            samples.reserve(n_samples);
+            double target = 0., walked = 0.;
+            size_t k = 0;
+            double seg_len = (wall[1 % wall.size()] - wall[0]).norm();
+            for (int s = 0; s < n_samples; ++ s, target = total * s / n_samples) {
+                while (walked + seg_len < target && k + 1 < wall.size() * 2) {
+                    walked += seg_len;
+                    ++ k;
+                    seg_len = (wall[(k + 1) % wall.size()] - wall[k % wall.size()]).norm();
+                }
+                const Vec2d &a = wall[k % wall.size()];
+                const Vec2d &b = wall[(k + 1) % wall.size()];
+                const double frac = seg_len > 1e-12 ? std::clamp((target - walked) / seg_len, 0.0, 1.0) : 0.0;
+                samples.push_back(a + frac * (b - a));
+            }
+            const int n = int(samples.size());
+            for (int s = 0; s < n; ++ s) {
+                const Vec2d &p0 = samples[(s + n - 1) % n];
+                const Vec2d &p1 = samples[s];
+                const Vec2d &p2 = samples[(s + 1) % n];
+                const double a_len = (p1 - p0).norm();
+                const double b_len = (p2 - p1).norm();
+                const double c_len = (p2 - p0).norm();
+                const double cross_mag = std::abs((p1.x() - p0.x()) * (p2.y() - p0.y()) - (p2.x() - p0.x()) * (p1.y() - p0.y()));
+                if (cross_mag < 1e-9)
+                    continue; // near-collinear: effectively straight, not a turn
+                const double radius = (a_len * b_len * c_len) / (2.0 * cross_mag);
+                any_turn_sample = true;
+                if (radius < worst_turn_radius_mm) {
+                    worst_turn_radius_mm = radius;
+                    worst_turn_z = layer->print_z;
+                }
+            }
+        }
+        if (any_turn_sample && worst_turn_radius_mm < m_config.ldm_min_turn_radius_mm.value) {
+            analysis.warnings.push_back({"LDM_TURN_RADIUS_TIGHT", "medium", "turn_radius",
+                L("LDM Vase Plus measured a tighter in-plane turn than the configured minimum radius; the inside of the curve may tear or over-thin."),
+                Slic3r::format("worst_turn_radius_mm=%.3f at z=%.2f", worst_turn_radius_mm, worst_turn_z),
+                worst_turn_z});
+        }
+    }
+
     // ---- Shared per-layer geometry (reservoir + stability screening) ----
     // Volumes: perimeters + fills; thin_fills are copied into fills during
     // infill generation, so counting both would double-count. Skirt/brim and

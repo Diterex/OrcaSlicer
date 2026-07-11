@@ -3026,6 +3026,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("ldm_nominal_bead_width_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-nominal-bead-width");
         optgroup->append_single_option_line("ldm_nominal_layer_height_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-nominal-layer-height");
         optgroup->append_single_option_line("ldm_max_unsupported_step_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-max-unsupported-step");
+        optgroup->append_single_option_line("ldm_min_turn_radius_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-min-turn-radius");
         optgroup->append_single_option_line("ldm_continuous_path_required", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#require-continuous-ldm-path");
         optgroup->append_single_option_line("ldm_disable_retracts", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#prefer-no-retracts");
         optgroup->append_single_option_line("ldm_disable_z_hop", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#prefer-no-z-hop");

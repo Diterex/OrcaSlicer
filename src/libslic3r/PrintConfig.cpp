@@ -6033,6 +6033,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
+    def = this->add("ldm_min_turn_radius_mm", coFloat);
+    def->label = L("Clay min turn radius");
+    def->category = L("Process");
+    def->tooltip = L("Minimum in-plane turn radius LDM Vase Plus expects the wall to hold. Tighter turns (including sharp corners) than this are flagged as likely to tear or over-thin on the inside of the curve. 0 disables the check.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
     def = this->add("ldm_continuous_path_required", coBool);
     def->label = L("Require continuous clay path");
     def->category = L("Process");

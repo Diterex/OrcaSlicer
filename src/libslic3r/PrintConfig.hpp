@@ -1604,6 +1604,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              ldm_nominal_bead_width_mm))
     ((ConfigOptionFloat,              ldm_nominal_layer_height_mm))
     ((ConfigOptionFloat,              ldm_max_unsupported_step_mm))
+    ((ConfigOptionFloat,              ldm_min_turn_radius_mm))
     ((ConfigOptionBool,               ldm_continuous_path_required))
     ((ConfigOptionBool,               ldm_disable_retracts))
     ((ConfigOptionBool,               ldm_disable_z_hop))

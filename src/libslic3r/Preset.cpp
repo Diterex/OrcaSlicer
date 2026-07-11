@@ -1011,6 +1011,7 @@ static std::vector<std::string> s_Preset_print_options{
     "spiral_mode",
     // Clay fork: LDM Vase Plus analysis parameters.
     "ldm_nominal_bead_width_mm", "ldm_nominal_layer_height_mm", "ldm_max_unsupported_step_mm",
+    "ldm_min_turn_radius_mm",
     "ldm_continuous_path_required", "ldm_disable_retracts", "ldm_disable_z_hop",
     "spiral_mode_smooth",
     "spiral_mode_max_xy_smoothing",
