@@ -1,0 +1,174 @@
+name: Clay CI
+
+# CeramicaSlicer (Clay Vase Plus) verification workflow.
+# Runs the Linux build + unit tests on clay branches, reusing the upstream
+# build_check_cache -> build_deps -> build_orca chain so the deps cache and
+# build logic stay identical to upstream CI. The aarch64 leg is used because
+# build_orca.yml builds and tars the unit tests on that leg.
+
+on:
+  push:
+    branches:
+      - clay-vase-plus
+      - clay/*
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - '**/CMakeLists.txt'
+      - 'version.inc'
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/build_*.yml'
+      - '.github/workflows/clay-ci.yml'
+  pull_request:
+    branches:
+      - clay-vase-plus
+  workflow_dispatch:
+
+concurrency:
+  group: clay-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_linux:
+    name: Build Linux (aarch64, with tests)
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: ubuntu-24.04-arm
+      arch: aarch64
+    secrets: inherit
+
+  build_windows:
+    # Produces the portable Windows x64 zip artifact - the runnable build for
+    # the actual clay machine workflow (no local VS toolchain required).
+    name: Build Windows x64
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: windows-latest
+      arch: x64
+    secrets: inherit
+
+  unit_tests:
+    name: Unit Tests
+    runs-on: ubuntu-24.04-arm
+    needs: build_linux
+    if: ${{ !cancelled() && success() }}
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github
+            scripts
+            tests
+      - name: Apt-Install Dependencies
+        uses: ./.github/actions/apt-install-deps
+      - name: Restore Test Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ github.sha }}-tests-linux-aarch64
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~4.3.0"
+          useLocalCache: true
+          useCloudCache: true
+      - name: Unpackage and Run Unit Tests
+        timeout-minutes: 20
+        run: |
+          tar -xvf build_tests.tar
+          scripts/run_unit_tests.sh
+      - name: Upload Test Logs
+        uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        with:
+          name: clay-unit-test-logs
+          path: build/tests/**/*.log
+      - name: Publish Test Results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: "ctest_results.xml"
+
+  trust_gate:
+    # The roadmap's trust gate as a regression test: slice the three
+    # case-study corpus models with the freshly built slicer and assert the
+    # classifications (tumbler=clean_control, Julia=body_spread,
+    # Julia+MOP=base_concentrated).
+    name: Clay Trust Gate
+    runs-on: ubuntu-24.04-arm
+    needs: build_linux
+    if: ${{ !cancelled() && success() }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github
+            scripts
+            tests/data/clay_corpus
+      - name: Apt-Install Dependencies
+        uses: ./.github/actions/apt-install-deps
+      - name: Install xvfb
+        run: sudo apt-get install -y xvfb
+      - name: Download AppImage
+        uses: actions/download-artifact@v8
+        with:
+          pattern: OrcaSlicer_Linux_ubuntu_*
+          merge-multiple: true
+      - name: Extract AppImage
+        run: |
+          chmod +x OrcaSlicer_Linux_AppImage*.AppImage
+          ./OrcaSlicer_Linux_AppImage*.AppImage --appimage-extract > /dev/null
+      - name: Run trust gate
+        timeout-minutes: 30
+        run: |
+          xvfb-run -a python3 scripts/clay_trust_gate.py \
+            --corpus tests/data/clay_corpus \
+            --slicer ./squashfs-root/AppRun \
+            --out /tmp/trust-gate
+      - name: Upload sliced G-code on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: trust-gate-gcode
+          path: /tmp/trust-gate/**/*.gcode
+          if-no-files-found: ignore
+
+  publish_dev_build:
+    # Rolling release so the latest green Windows build has a stable
+    # browser-download URL (artifacts expire; gh CLI shouldn't be required).
+    name: Publish dev build
+    runs-on: ubuntu-latest
+    needs: [build_windows, unit_tests, trust_gate]
+    if: ${{ success() && github.event_name == 'push' }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github
+      - name: Download Windows portable
+        uses: actions/download-artifact@v8
+        with:
+          pattern: OrcaSlicer_Windows_*_portable
+          path: win-portable
+          merge-multiple: true
+      - name: Repack and publish
+        run: |
+          cd win-portable
+          zip -qr ../CeramicaSlicer_Windows_x64_ldm-dev_portable.zip .
+          cd ..
+          gh release view ldm-dev-latest --repo ${{ github.repository }} >/dev/null 2>&1 || \
+            gh release create ldm-dev-latest --repo ${{ github.repository }} --prerelease \
+              --title "LDM dev build (rolling)" \
+              --notes "Latest green build of the clay-vase-plus branch. Unzip and run orca-slicer.exe. Manual: doc/LDMVasePlus.md"
+          gh release upload ldm-dev-latest CeramicaSlicer_Windows_x64_ldm-dev_portable.zip \
+            --repo ${{ github.repository }} --clobber
+          gh release edit ldm-dev-latest --repo ${{ github.repository }} \
+            --notes "Latest green build of the clay-vase-plus branch (commit ${{ github.sha }}). Unzip and run orca-slicer.exe. Manual: https://github.com/${{ github.repository }}/blob/clay-vase-plus/doc/LDMVasePlus.md"

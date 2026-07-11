@@ -22,6 +22,7 @@
 #include "libslic3r/format.hpp"
 #include "Time.hpp"
 #include "GCode/ExtrusionProcessor.hpp"
+#include "nlohmann/json.hpp"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -354,6 +355,139 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
     {
         if (!gcode.empty() && gcode.back() != '\n')
             gcode += '\n';
+    }
+
+    static std::string trim_copy(std::string value)
+    {
+        boost::trim(value);
+        return value;
+    }
+
+    static std::string lowercase_copy(std::string value)
+    {
+        boost::to_lower(value);
+        return value;
+    }
+
+    static bool clay_mode_active(const PrintConfig &config)
+    {
+        return config.ldm_modded_printer.value;
+    }
+
+    static bool clay_native_startup_enabled(const PrintConfig &config)
+    {
+        return clay_mode_active(config) && config.ldm_start_gcode_mode.value == ClayStartGCodeMode::ClayNative;
+    }
+
+    // Expects an already-lowercased line.
+    static bool line_has_xy_motion(const std::string &line)
+    {
+        return line.find('x') != std::string::npos || line.find('y') != std::string::npos;
+    }
+
+    static bool line_looks_like_clay_hostile_retract(const std::string &line)
+    {
+        // Matched against the lowercased line below.
+        static const std::regex negative_e_move(R"((?:^|\s)e-\d)");
+        const std::string lowered = lowercase_copy(trim_copy(line));
+        if (lowered.empty() || lowered.front() == ';')
+            return false;
+        return std::regex_search(lowered, negative_e_move) || lowered.find("g10") == 0 || lowered.find("retract") != std::string::npos;
+    }
+
+    static bool line_looks_like_clay_hostile_purge(const std::string &line)
+    {
+        const std::string lowered = lowercase_copy(trim_copy(line));
+        if (lowered.empty() || lowered.front() == ';')
+            return false;
+        if (lowered.find("purge") != std::string::npos || lowered.find("prime line") != std::string::npos || lowered.find("wipe line") != std::string::npos)
+            return true;
+        return line_has_xy_motion(lowered) && lowered.find('e') != std::string::npos && (lowered.find("g0") == 0 || lowered.find("g1") == 0);
+    }
+
+    static std::string sanitize_clay_native_start_gcode(const std::string &gcode)
+    {
+        std::istringstream input(gcode);
+        std::ostringstream output;
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line_looks_like_clay_hostile_retract(line) || line_looks_like_clay_hostile_purge(line)) {
+                output << "; LDM Vase Plus removed startup line: " << trim_copy(line) << "\n";
+                continue;
+            }
+            output << line << "\n";
+        }
+        return output.str();
+    }
+
+    // Write the LDM Vase Plus analysis as a sidecar JSON next to the G-code.
+    // Additive output only; consumed by scripts/clay_trust_gate.py (fixture
+    // acceptance for docs/b2-support-margin-contract.md) and future tooling.
+    static void export_clay_analysis_sidecar(const Print &print, const std::string &gcode_path)
+    {
+        const ClayVasePlusAnalysisResult &a = print.clay_vase_plus_analysis();
+        nlohmann::json j;
+        j["analysis_version"] = a.analysis_version;
+        j["ldm_active"] = a.clay_mode_active;
+        j["overall_risk_level"] = a.overall_risk_level;
+        j["risk_distribution_mode"] = a.risk_distribution_mode;
+        j["body_fragmentation_zone"] = {
+            {"detected", a.body_fragmentation_zone.detected},
+            {"z_start_mm", a.body_fragmentation_zone.z_start_mm},
+            {"z_end_mm", a.body_fragmentation_zone.z_end_mm},
+            {"peak_outer_wall_sections", a.body_fragmentation_zone.peak_outer_wall_sections},
+            {"peak_overhang_wall_sections", a.body_fragmentation_zone.peak_overhang_wall_sections},
+        };
+        j["base_rescue_complexity"] = {
+            {"level", a.base_rescue_complexity.level},
+            {"highest_risk_z_mm", a.base_rescue_complexity.highest_risk_z_mm},
+            {"has_gap_infill", a.base_rescue_complexity.has_gap_infill},
+            {"has_restart_heavy_transition", a.base_rescue_complexity.has_restart_heavy_transition},
+        };
+        j["support_margin_summary"] = {
+            {"status", a.support_margin_summary.status},
+            {"first_warning_z_mm", a.support_margin_summary.first_warning_z_mm},
+            {"worst_margin_mm", a.support_margin_summary.worst_margin_mm},
+        };
+        j["startup_compatibility"] = {
+            {"status", a.startup_compatibility.status},
+            {"purge_like_start_detected", a.startup_compatibility.purge_like_start_detected},
+            {"startup_retract_risk", a.startup_compatibility.startup_retract_risk},
+        };
+        j["warnings"] = nlohmann::json::array();
+        for (const ClayVasePlusWarning &w : a.warnings)
+            j["warnings"].push_back({
+                {"code", w.code}, {"severity", w.severity}, {"category", w.category},
+                {"message", w.message}, {"metric", w.metric}, {"z_hint_mm", w.z_hint_mm},
+            });
+        j["stability"] = {
+            {"evaluated", a.stability.evaluated},
+            {"squash_ratio", a.stability.squash_ratio},
+            {"buckle_ratio", a.stability.buckle_ratio},
+            {"cantilever_ratio", a.stability.cantilever_ratio},
+            {"predicted_mode", a.stability.predicted_mode},
+            {"failing_z_mm", a.stability.failing_z_mm},
+        };
+        j["support_margin_field"] = nlohmann::json::array();
+        for (const ClaySupportMarginLoop &loop : a.support_margin_field)
+            j["support_margin_field"].push_back({
+                {"layer_idx", loop.layer_idx},
+                {"z_mm", loop.z_mm},
+                {"a_max_mm", loop.a_max_mm},
+                {"dz_budget_mm", loop.dz_budget_mm},
+                {"worst_advance_mm", loop.worst_advance_mm()},
+                {"violating_fraction", loop.violating_fraction()},
+            });
+        const std::string sidecar_path = gcode_path + ".ldm-analysis.json";
+        FILE *fp = boost::nowide::fopen(sidecar_path.c_str(), "wb");
+        if (fp == nullptr) {
+            BOOST_LOG_TRIVIAL(warning) << "LDM Vase Plus: cannot write analysis sidecar " << sidecar_path;
+            return;
+        }
+        const std::string dump = j.dump(2);
+        fwrite(dump.data(), 1, dump.size(), fp);
+        fclose(fp);
+        BOOST_LOG_TRIVIAL(info) << "LDM Vase Plus: analysis sidecar written to " << sidecar_path;
     }
 
 
@@ -2394,12 +2528,17 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
     m_processor.result().long_retraction_when_cut = activate_long_retraction_when_cut;
    
     {   //BBS:check bed and filament compatible
-        const ConfigOptionInts *bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(m_config.curr_bed_type));
+        // Clay fork: on an LDM printer, bed_temp == 0 means "intentionally
+        // unheated" (wet clay needs no bed heat), not "unset/incompatible" -
+        // skip the stock filament/plate compatibility nag in that case.
         std::vector<int> conflict_filament;
-        for(auto extruder_id : m_initial_layer_extruders){
-            int cur_bed_temp = bed_temp_opt->get_at(extruder_id);
-            if (cur_bed_temp == 0) {
-                conflict_filament.push_back(extruder_id);
+        if (!clay_mode_active(m_config)) {
+            const ConfigOptionInts *bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(m_config.curr_bed_type));
+            for(auto extruder_id : m_initial_layer_extruders){
+                int cur_bed_temp = bed_temp_opt->get_at(extruder_id);
+                if (cur_bed_temp == 0) {
+                    conflict_filament.push_back(extruder_id);
+                }
             }
         }
 
@@ -2456,6 +2595,8 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
     }
     else {
         BOOST_LOG_TRIVIAL(info) << boost::format("rename_file from %1% to %2% successfully")% path_tmp % path;
+        if (clay_mode_active(print->config()))
+            export_clay_analysis_sidecar(*print, path);
     }
 
     BOOST_LOG_TRIVIAL(info) << "Exporting G-code finished" << log_memory_info();
@@ -3440,6 +3581,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     update_placeholder_parser_with_variant_params();
 
     std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    if (clay_native_startup_enabled(print.config()))
+        machine_start_gcode = sanitize_clay_native_start_gcode(machine_start_gcode);
     if (print.config().gcode_flavor != gcfKlipper) {
         // Set bed temperature if the start G-code does not contain any bed temp control G-codes.
         this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, true);
