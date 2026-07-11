@@ -1840,6 +1840,43 @@ void Print::update_clay_body_continuity_analysis() const
         }
     }
 
+    // ---- Bead-compression ratio check (docs/clay-rules-knowledge-base.md
+    // rule 2: wall_thickness_over_layer_height) ----
+    // Layer height should stay a conservative fraction of bead width so
+    // each bead compresses and keys into the one below; too high risks
+    // poor interlayer adhesion, too low risks over-compressing the bead.
+    if (m_config.ldm_nominal_bead_width_mm.value > EPSILON) {
+        double step_sum = 0.0;
+        int    step_count = 0;
+        double prev_z = 0.0;
+        bool   have_prev = false;
+        for (const LdmLayerGeom &geom : layer_geom) {
+            if (!geom.has_wall)
+                continue;
+            if (have_prev) {
+                step_sum += std::max(0.01, geom.z - prev_z);
+                ++ step_count;
+            }
+            prev_z = geom.z;
+            have_prev = true;
+        }
+        if (step_count > 0) {
+            const double mean_step = step_sum / step_count;
+            const double ratio = mean_step / m_config.ldm_nominal_bead_width_mm.value;
+            if (ratio > 0.42) {
+                analysis.warnings.push_back({"LDM_BEAD_COMPRESSION_LOW", "medium", "wall_thickness",
+                    L("Mean effective layer height is high relative to the nominal bead width; beads may not key well into the layer below."),
+                    Slic3r::format("mean_effective_layer_height_mm=%.3f, ratio=%.3f", mean_step, ratio),
+                    -1.0});
+            } else if (ratio < 0.15) {
+                analysis.warnings.push_back({"LDM_BEAD_COMPRESSION_HIGH", "medium", "wall_thickness",
+                    L("Mean effective layer height is very low relative to the nominal bead width; the bead may be over-compressed."),
+                    Slic3r::format("mean_effective_layer_height_mm=%.3f, ratio=%.3f", mean_step, ratio),
+                    -1.0});
+            }
+        }
+    }
+
     // ---- B4 Tier-1 self-weight stability screening ----
     // Conservative (no strength-gain time credit). Requires declared material
     // properties and the nominal bead; parameters default to 0 = off until

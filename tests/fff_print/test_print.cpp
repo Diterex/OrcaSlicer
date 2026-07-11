@@ -496,6 +496,48 @@ TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exce
     CHECK(refill->z_hint_mm <= 20.0);
 }
 
+TEST_CASE("LDM bead compression check flags a high ratio when layer height is large relative to bead width", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 2.0mm layers against a 4.0mm nominal bead is a 0.5 ratio, above the
+    // 0.42 safe-keying ceiling (docs/clay-rules-knowledge-base.md rule 2).
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.0 },
+        { "layer_height", 2.0 },
+        { "first_layer_height", 2.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_BEAD_COMPRESSION_LOW"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "medium");
+}
+
+TEST_CASE("LDM bead compression check flags a low ratio when layer height is small relative to bead width", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 0.5mm layers against a 4.62mm nominal bead is a ~0.108 ratio, below
+    // the 0.15 over-compression floor.
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 },
+        { "layer_height", 0.5 },
+        { "first_layer_height", 0.5 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto warn = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_BEAD_COMPRESSION_HIGH"; });
+    REQUIRE(warn != analysis.warnings.end());
+    CHECK(warn->severity == "medium");
+}
+
 TEST_CASE("LDM stability screening stays off without declared material properties", "[Print][ClayVasePlus][Stability]")
 {
     Slic3r::Print print;

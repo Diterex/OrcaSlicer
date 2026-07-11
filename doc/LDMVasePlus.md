@@ -320,6 +320,7 @@ continuity and leave witness marks in soft material.
 | `LDM_SUPPORT_MARGIN_MARGINAL` / `LDM_SUPPORT_MARGIN_FAILING` | Outward step near / beyond the admissible envelope, with the worst Z |
 | `LDM_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
 | `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
+| `LDM_BEAD_COMPRESSION_LOW` / `LDM_BEAD_COMPRESSION_HIGH` | Mean effective layer height vs. `ldm_nominal_bead_width_mm` ratio is outside the safe keying band (too high: poor interlayer keying; too low: over-compressed bead) |
 
 ### In-app risk panel (G-code preview)
 
@@ -400,12 +401,12 @@ and verification evidence.
   (fork-hosted docs) in addition to upstream wiki paths.
 
 **Tests & CI**
-- 14 LDM unit tests in `tests/fff_print/` (config warnings, startup
+- 16 LDM unit tests in `tests/fff_print/` (config warnings, startup
   sanitizing, continuity classification incl. false-positive guards,
   support margin on known geometry — a plain cube must be `safe`, a 45°
   chamfer must be `failing` under the 40° envelope, an explicit step
   override must win — sidecar existence/contents, reservoir refill
-  warning).
+  warning, bead-compression ratio at both ends of the safe band).
 - `.github/workflows/clay-ci.yml`: Linux build + full upstream suite;
   **Windows x64 portable build** every push (published to the rolling
   `ldm-dev-latest` release); compiler caching; the **trust gate** —
@@ -431,6 +432,15 @@ and verification evidence.
 **Naming**: warning codes were renamed from `LVP_*` to `LDM_*` (2026-07-07) —
 `LVP` ("LDM Vase Plus") read as an unexplained abbreviation next to every
 other user-facing symbol being `LDM`/`ldm_*`. No behavior change.
+
+**New check (2026-07-11)**: `LDM_BEAD_COMPRESSION_LOW` / `_HIGH` — flags
+the mean effective layer height vs. `ldm_nominal_bead_width_mm` ratio when
+it falls outside a safe keying band (>0.42: beads may not key into the
+layer below; <0.15: bead may be over-compressed). Sourced from the clay
+knowledge-base rule `wall_thickness_over_layer_height` (see
+`docs/clay-rules-knowledge-base.md` rule 2 in the project repo) — this
+was flagged as a partial gap and is the first of the two checks proposed
+in the Codex-lab integration plan's §6.2.
 
 **Not in this build (by design, next phases):** no toolpath correction,
 no in-viewport risk overlay (warnings + sidecar only), thresholds not
