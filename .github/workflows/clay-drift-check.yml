@@ -1,0 +1,69 @@
+name: Clay Drift Check
+
+# Alerts when clay-vase-plus falls too far behind upstream OrcaSlicer/OrcaSlicer,
+# so the periodic rebase stays small and cheap instead of silently ballooning
+# into a large, multi-conflict rebase (the 2026-07-11 rebase found 32 commits
+# of drift accumulated over one missed week, plus an upstream test-suite
+# reorganization and a broken CI artifact-naming contract that only surfaced
+# once the pipeline actually ran).
+#
+# This workflow only measures and alerts - it never rebases automatically.
+# Conflict resolution needs a human/Claude decision; see
+# docs/orcaslicer-clay-fork-notes.md for the procedure (squash-then-rebase is
+# the standard approach now, not a commit-by-commit replay).
+
+on:
+  schedule:
+    - cron: '0 13 * * 1,4' # Monday and Thursday, 13:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  check_drift:
+    name: Check commits behind upstream/main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout clay-vase-plus
+        uses: actions/checkout@v6
+        with:
+          ref: clay-vase-plus
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/OrcaSlicer/OrcaSlicer.git
+          git fetch upstream main --quiet
+
+      - name: Count drift
+        id: drift
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          AHEAD=$(git rev-list --count upstream/main..HEAD)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+          echo "clay-vase-plus is $BEHIND commits behind and $AHEAD ahead of upstream/main"
+
+      - name: Open or update a tracking issue if drift is high
+        if: ${{ fromJSON(steps.drift.outputs.behind) > 15 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY="Automated drift check: \`clay-vase-plus\` is **${{ steps.drift.outputs.behind }} commits behind** \`upstream/main\` as of $(date -u +%Y-%m-%d).
+
+          Time to rebase - see \`docs/orcaslicer-clay-fork-notes.md\` for the procedure. Prefer squash-then-rebase (collapse the fork's commits into one, rebase that single commit onto upstream, verify on a \`clay/*\`-named branch so CI runs, then force-push \`clay-vase-plus\`) over a commit-by-commit replay once drift is this large - see the 2026-07-11 audit for why.
+
+          This issue will be updated on the next check if drift is still high, and should be closed once the rebase lands."
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --search "\"commits behind upstream\" in:title" --state open --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "clay-vase-plus is ${{ steps.drift.outputs.behind }} commits behind upstream" --body "$BODY"
+          fi
+
+      - name: Fail if drift is high (visible in the Actions tab)
+        if: ${{ fromJSON(steps.drift.outputs.behind) > 15 }}
+        run: |
+          echo "::error::clay-vase-plus is ${{ steps.drift.outputs.behind }} commits behind upstream/main - time to rebase."
+          exit 1
