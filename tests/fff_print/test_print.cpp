@@ -496,17 +496,20 @@ TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exce
     CHECK(refill->z_hint_mm <= 20.0);
 }
 
-TEST_CASE("LDM bead compression check flags a high ratio when layer height is large relative to bead width", "[Print][ClayVasePlus]")
+TEST_CASE("LDM bead compression check flags a high ratio when the nominal bead is absurdly narrow", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
-    // 2.0mm layers against a 4.0mm nominal bead is a 0.5 ratio, above the
-    // 0.42 safe-keying ceiling (docs/clay-rules-knowledge-base.md rule 2).
+    // ldm_nominal_bead_width_mm is informational only (does not change the
+    // real slicer extrusion width - see its tooltip), so drive the ratio to
+    // an extreme via the bead width alone rather than layer_height: an
+    // explicit layer_height incompatible with the default nozzle/extrusion
+    // width previously made Flow::spacing() go negative and throw. A bead
+    // this narrow guarantees mean_layer_height / bead_width > 0.42 no
+    // matter what the default layer height actually is.
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
         { "ldm_modded_printer", true },
-        { "ldm_nominal_bead_width_mm", 4.0 },
-        { "layer_height", 2.0 },
-        { "first_layer_height", 2.0 }
+        { "ldm_nominal_bead_width_mm", 0.02 }
     });
     print.process();
 
@@ -517,17 +520,16 @@ TEST_CASE("LDM bead compression check flags a high ratio when layer height is la
     CHECK(warn->severity == "medium");
 }
 
-TEST_CASE("LDM bead compression check flags a low ratio when layer height is small relative to bead width", "[Print][ClayVasePlus]")
+TEST_CASE("LDM bead compression check flags a low ratio when the nominal bead is absurdly wide", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
     Slic3r::Model model;
-    // 0.5mm layers against a 4.62mm nominal bead is a ~0.108 ratio, below
-    // the 0.15 over-compression floor.
+    // Mirror of the above: a bead this wide guarantees
+    // mean_layer_height / bead_width < 0.15 regardless of the default
+    // layer height, without touching layer_height itself.
     Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
         { "ldm_modded_printer", true },
-        { "ldm_nominal_bead_width_mm", 4.62 },
-        { "layer_height", 0.5 },
-        { "first_layer_height", 0.5 }
+        { "ldm_nominal_bead_width_mm", 50.0 }
     });
     print.process();
 
@@ -536,6 +538,45 @@ TEST_CASE("LDM bead compression check flags a low ratio when layer height is sma
         [](const auto &w) { return w.code == "LDM_BEAD_COMPRESSION_HIGH"; });
     REQUIRE(warn != analysis.warnings.end());
     CHECK(warn->severity == "medium");
+}
+
+TEST_CASE("LDM reservoir check uses the declared current fill instead of assuming full", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // A 1000 mL reservoir never runs dry on a 20mm cube, but a declared
+    // 1 mL remaining in the current load must trigger the refill warning
+    // (Track B5 stopgap for the Klipper LDM_RESERVOIR_STATUS macro).
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_reservoir_volume_ml", 1000.0 },
+        { "ldm_reservoir_current_ml", 1.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_RESERVOIR_REFILL"; });
+    REQUIRE(refill != analysis.warnings.end());
+    CHECK(refill->z_hint_mm > 0.0);
+    CHECK(refill->z_hint_mm <= 20.0);
+    CHECK_THAT(refill->metric, Catch::Matchers::ContainsSubstring("current_ml=1"));
+}
+
+TEST_CASE("LDM reservoir check still assumes a full load when no current fill is declared", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::cube_20x20x20}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_reservoir_volume_ml", 1000.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    const auto refill = std::find_if(analysis.warnings.begin(), analysis.warnings.end(),
+        [](const auto &w) { return w.code == "LDM_RESERVOIR_REFILL"; });
+    CHECK(refill == analysis.warnings.end());
 }
 
 TEST_CASE("LDM turn-radius check stays off without a configured minimum radius", "[Print][ClayVasePlus]")

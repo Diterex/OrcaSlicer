@@ -284,6 +284,28 @@ of each consecutive sample triple.
   inside of the turn), not just a false positive; fillet the profile or
   raise the threshold if the design intends them.
 
+### LDM reservoir current fill
+
+`ldm_reservoir_current_ml` (default 0 = assume full)
+
+How much material is actually left in the current reservoir load. One
+syringe load often spans multiple prints, but the refill check otherwise
+has to assume every print starts from a full reservoir
+(`ldm_reservoir_volume_ml`, a printer setting).
+
+- **0 (default):** assume a full load — the original behavior.
+- **> 0:** the refill warning is computed against this remaining volume
+  instead. Set it before slicing from whatever the printer reports — the
+  companion Klipper macros (`SYRINGE_CHANGE` / `LDM_RESERVOIR_STATUS`,
+  drafted in the project repo's `corpus/klipper_syringe_change.cfg`) track
+  cumulative E-axis travel since the last refill and print exactly this
+  number. Values above the reservoir capacity are clamped to capacity.
+
+This is the Track B5 stopgap: it closes the "slicer has no memory of
+earlier prints" gap manually. The planned follow-on queries the Klipper
+`save_variables` live over Moonraker from the Device tab and keeps this
+number honest automatically.
+
 ### Require continuous LDM path
 
 `ldm_continuous_path_required` (default on)
@@ -335,7 +357,7 @@ continuity and leave witness marks in soft material.
 | `LDM_WALL_FRAGMENTATION_HIGH` | Sustained body region with fragmented wall roles, with the zone's Z range |
 | `LDM_NARROW_GAP_MEDIUM` | Sub-bead rescue structure in the base region |
 | `LDM_SUPPORT_MARGIN_MARGINAL` / `LDM_SUPPORT_MARGIN_FAILING` | Outward step near / beyond the admissible envelope, with the worst Z |
-| `LDM_RESERVOIR_REFILL` | Print volume exceeds the reservoir; includes the run-dry Z height |
+| `LDM_RESERVOIR_REFILL` | Print volume exceeds the reservoir (or the declared current fill, if set); includes the run-dry Z height |
 | `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
 | `LDM_BEAD_COMPRESSION_LOW` / `LDM_BEAD_COMPRESSION_HIGH` | Mean effective layer height vs. `ldm_nominal_bead_width_mm` ratio is outside the safe keying band (too high: poor interlayer keying; too low: over-compressed bead) |
 | `LDM_TURN_RADIUS_TIGHT` | Measured in-plane turn radius (incl. sharp corners) below `ldm_min_turn_radius_mm`, with the worst Z |
@@ -419,13 +441,14 @@ and verification evidence.
   (fork-hosted docs) in addition to upstream wiki paths.
 
 **Tests & CI**
-- 18 LDM unit tests in `tests/fff_print/` (config warnings, startup
+- 20 LDM unit tests in `tests/fff_print/` (config warnings, startup
   sanitizing, continuity classification incl. false-positive guards,
   support margin on known geometry — a plain cube must be `safe`, a 45°
   chamfer must be `failing` under the 40° envelope, an explicit step
   override must win — sidecar existence/contents, reservoir refill
-  warning, bead-compression ratio at both ends of the safe band, turn-
-  radius disabled-by-default and tight-turn-flagged).
+  warning incl. current-fill override and full-load default, bead-
+  compression ratio at both ends of the safe band, turn-radius
+  disabled-by-default and tight-turn-flagged).
 - `.github/workflows/clay-ci.yml`: Linux build + full upstream suite;
   **Windows x64 portable build** every push (published to the rolling
   `ldm-dev-latest` release); compiler caching; the **trust gate** —
@@ -469,6 +492,16 @@ support-margin field) against the configured minimum. The second of the
 two checks proposed in the Codex-lab integration plan's §6.2, modeled on
 that lab's `_check_turn_radius` but measured from the actual sliced wall
 loop rather than the parametric input surface.
+
+**Track B5 stopgap (2026-07-11)**: new `ldm_reservoir_current_ml` process
+setting (default 0 = assume full). When set, `LDM_RESERVOIR_REFILL` is
+computed against the declared remaining volume in the current load
+instead of assuming a fresh full reservoir, with a distinct message and a
+`current_ml=` metric. Pairs with the Klipper `SYRINGE_CHANGE` /
+`LDM_RESERVOIR_STATUS` macros (project repo,
+`corpus/klipper_syringe_change.cfg`); the live Moonraker/Device-tab query
+remains the planned follow-on. Full-load behavior is byte-identical to
+before when the new setting is unset.
 
 **Not in this build (by design, next phases):** no toolpath correction,
 no in-viewport risk overlay (warnings + sidecar only), thresholds not

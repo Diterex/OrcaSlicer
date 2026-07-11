@@ -1887,7 +1887,13 @@ void Print::update_clay_body_continuity_analysis() const
     // ---- Reservoir capacity check ----
     const double reservoir_ml = m_config.ldm_reservoir_volume_ml.value;
     if (reservoir_ml > EPSILON) {
-        const double capacity_mm3 = reservoir_ml * 1000.0;
+        // Track B5 stopgap: a declared current fill (e.g. from the printer's
+        // LDM_RESERVOIR_STATUS macro) replaces the fresh-full-load assumption
+        // until the Device tab can query it live over Moonraker.
+        const double current_ml = m_config.ldm_reservoir_current_ml.value;
+        const bool   partial_load = current_ml > EPSILON && current_ml < reservoir_ml;
+        const double available_ml = partial_load ? current_ml : reservoir_ml;
+        const double capacity_mm3 = available_ml * 1000.0;
         double cumulative_mm3 = 0.0;
         double runs_dry_z = -1.0;
         for (const LdmLayerGeom &geom : layer_geom) {
@@ -1897,9 +1903,14 @@ void Print::update_clay_body_continuity_analysis() const
         }
         if (runs_dry_z >= 0.) {
             analysis.warnings.push_back({"LDM_RESERVOIR_REFILL", "high", "reservoir",
-                L("This print needs more material than the reservoir holds; plan a refill before the indicated height."),
-                Slic3r::format("print_volume_ml=%.0f, reservoir_ml=%.0f, runs_dry_at_z=%.1f",
-                    cumulative_mm3 / 1000.0, reservoir_ml, runs_dry_z),
+                partial_load
+                    ? L("This print needs more material than is left in the current reservoir load; plan a refill before the indicated height.")
+                    : L("This print needs more material than the reservoir holds; plan a refill before the indicated height."),
+                partial_load
+                    ? Slic3r::format("print_volume_ml=%.0f, current_ml=%.0f, reservoir_ml=%.0f, runs_dry_at_z=%.1f",
+                          cumulative_mm3 / 1000.0, current_ml, reservoir_ml, runs_dry_z)
+                    : Slic3r::format("print_volume_ml=%.0f, reservoir_ml=%.0f, runs_dry_at_z=%.1f",
+                          cumulative_mm3 / 1000.0, reservoir_ml, runs_dry_z),
                 runs_dry_z});
             if (analysis.overall_risk_level != "high_risk")
                 analysis.overall_risk_level = "guarded";

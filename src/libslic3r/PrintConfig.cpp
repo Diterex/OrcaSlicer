@@ -6033,6 +6033,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
+    def = this->add("ldm_reservoir_current_ml", coFloat);
+    def->label = L("Clay reservoir current fill");
+    def->category = L("Process");
+    def->tooltip = L("How much material is actually left in the current reservoir load, e.g. as reported by the printer's LDM_RESERVOIR_STATUS macro. When set, the refill warning is computed against this instead of assuming a full reservoir. 0 means assume full. This is the Track B5 stopgap until the Device tab queries the printer live.");
+    def->sidetext = L("mL");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
     def = this->add("ldm_min_turn_radius_mm", coFloat);
     def->label = L("Clay min turn radius");
     def->category = L("Process");

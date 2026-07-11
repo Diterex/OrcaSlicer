@@ -3900,7 +3900,7 @@ const std::vector<std::string> ldm_printer_option_keys = {
 };
 const std::vector<std::string> ldm_print_option_keys = {
     "ldm_nominal_bead_width_mm", "ldm_nominal_layer_height_mm", "ldm_max_unsupported_step_mm",
-    "ldm_min_turn_radius_mm",
+    "ldm_min_turn_radius_mm", "ldm_reservoir_current_ml",
     "ldm_continuous_path_required", "ldm_disable_retracts", "ldm_disable_z_hop"
 };
 const std::vector<std::string> ldm_filament_option_keys = {
