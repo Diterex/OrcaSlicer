@@ -464,7 +464,7 @@ and verification evidence.
   (fork-hosted docs) in addition to upstream wiki paths.
 
 **Tests & CI**
-- 21 LDM unit tests in `tests/fff_print/` (config warnings, startup
+- 20 LDM unit tests in `tests/fff_print/` (config warnings, startup
   sanitizing, continuity classification incl. false-positive guards,
   support margin on known geometry — a plain cube must be `safe`, a 45°
   chamfer must be `failing` under the 40° envelope, an explicit step
