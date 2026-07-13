@@ -306,6 +306,29 @@ earlier prints" gap manually. The planned follow-on queries the Klipper
 `save_variables` live over Moonraker from the Device tab and keeps this
 number honest automatically.
 
+### LDM measured flow multiplier
+
+`ldm_flow_multiplier_measured` (default 0 = not measured)
+
+The current syringe load's measured flow output, in **grams per commanded
+E-mm**, as reported by the machine flow check (the `LDM_FLOW_TUNE` /
+`LDM_FLOW_RESULT` Klipper macros, or the
+[blob-scale](https://github.com/Diterex/blob-scale) connected scale).
+Informational: it does not change slicing; it is recorded in the analysis
+sidecar's `load_fingerprint` block so every exported print is tagged with
+the material state it assumed. Update it per syringe load, like the
+reservoir fill.
+
+### LDM flow ceiling
+
+`ldm_flow_ceiling_mm_s` (default 0 = not measured)
+
+The current load's measured flow ceiling — the E-axis rate (mm/s) where
+the auger starts slipping, from the same flow check. Informational,
+recorded in the sidecar `load_fingerprint`. A future check may compare
+this against the sliced print's demanded extrusion rates; for now it is
+the operator's speed budget on record.
+
 ### Require continuous LDM path
 
 `ldm_continuous_path_required` (default on)
@@ -441,13 +464,14 @@ and verification evidence.
   (fork-hosted docs) in addition to upstream wiki paths.
 
 **Tests & CI**
-- 20 LDM unit tests in `tests/fff_print/` (config warnings, startup
+- 21 LDM unit tests in `tests/fff_print/` (config warnings, startup
   sanitizing, continuity classification incl. false-positive guards,
   support margin on known geometry — a plain cube must be `safe`, a 45°
   chamfer must be `failing` under the 40° envelope, an explicit step
-  override must win — sidecar existence/contents, reservoir refill
-  warning incl. current-fill override and full-load default, bead-
-  compression ratio at both ends of the safe band, turn-radius
+  override must win — sidecar existence/contents incl. the
+  load-fingerprint block in measured and unmeasured states, reservoir
+  refill warning incl. current-fill override and full-load default,
+  bead-compression ratio at both ends of the safe band, turn-radius
   disabled-by-default and tight-turn-flagged).
 - `.github/workflows/clay-ci.yml`: Linux build + full upstream suite;
   **Windows x64 portable build** every push (published to the rolling
@@ -502,6 +526,22 @@ instead of assuming a fresh full reservoir, with a distinct message and a
 `corpus/klipper_syringe_change.cfg`); the live Moonraker/Device-tab query
 remains the planned follow-on. Full-load behavior is byte-identical to
 before when the new setting is unset.
+
+**Track B6-lite (2026-07-11)**: new `ldm_flow_multiplier_measured` and
+`ldm_flow_ceiling_mm_s` process settings (default 0 = not measured) and a
+`load_fingerprint` block in the analysis sidecar. Entered per syringe
+load from the machine flow check, they tag every exported print with the
+measured material state it assumed (clay-rules KB rules 9/11: results
+carry their material context). Purely additive — no slicing behavior
+change. The Calibration-menu flow-check generator and Moonraker
+round-trip remain designed-not-built (roadmap Track B6).
+
+**Companion Klipper tooling**: the machine-side flow check
+(`LDM_FLOW_TUNE` adaptive search, fixed sweep, baseline + automatic M221
+correction, `SYRINGE_CHANGE` reservoir tracking) lives in the project
+repo's `corpus/klipper_flow_check.cfg` / `corpus/klipper_syringe_change.cfg`;
+the DIY printer-connected scale that automates the weighing is its own
+open-source project: [blob-scale](https://github.com/Diterex/blob-scale).
 
 **Not in this build (by design, next phases):** no toolpath correction,
 no in-viewport risk overlay (warnings + sidecar only), thresholds not

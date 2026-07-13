@@ -6102,6 +6102,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
+    def = this->add("ldm_flow_multiplier_measured", coFloat);
+    def->label = L("Clay measured flow multiplier");
+    def->category = L("Process");
+    def->tooltip = L("The current load's measured flow output (grams per commanded E-mm) from the machine flow check (LDM_FLOW_TUNE / blob-scale). Informational: recorded in the analysis sidecar so every print is tagged with the material state it assumed. 0 means not measured.");
+    def->sidetext = L("g/E-mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_flow_ceiling_mm_s", coFloat);
+    def->label = L("Clay flow ceiling");
+    def->category = L("Process");
+    def->tooltip = L("The current load's measured flow ceiling (E-axis mm/s where the auger starts slipping) from the machine flow check. Informational: recorded in the analysis sidecar. 0 means not measured.");
+    def->sidetext = L("mm/s");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
     def = this->add("ldm_min_turn_radius_mm", coFloat);
     def->label = L("Clay min turn radius");
     def->category = L("Process");

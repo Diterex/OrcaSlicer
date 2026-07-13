@@ -749,6 +749,41 @@ TEST_CASE("LDM Vase Plus writes an analysis sidecar next to exported G-code", "[
     CHECK(j["ldm_active"] == true);
     CHECK(j["support_margin_summary"]["status"] == "safe");
     CHECK(j["support_margin_field"].size() > 0);
+    // No flow check entered: the fingerprint must exist but say unmeasured.
+    CHECK(j["load_fingerprint"]["measured"] == false);
+
+    boost::filesystem::remove(gcode_path);
+    boost::filesystem::remove(sidecar);
+}
+
+TEST_CASE("LDM sidecar tags the print with the measured load fingerprint", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // Values as the machine flow check (LDM_FLOW_TUNE / blob-scale) would
+    // report them: g per commanded E-mm and the auger-slip ceiling.
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_flow_multiplier_measured", 0.0378 },
+        { "ldm_flow_ceiling_mm_s", 12.0 }
+    });
+    print.set_status_silent();
+    print.process();
+
+    boost::filesystem::path gcode_path =
+        boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("clay-fingerprint-%%%%%%%%.gcode");
+    print.export_gcode(gcode_path.string(), nullptr, nullptr);
+    boost::filesystem::path sidecar = gcode_path;
+    sidecar += ".ldm-analysis.json";
+
+    REQUIRE(boost::filesystem::exists(sidecar));
+    std::ifstream sidecar_stream(sidecar.string());
+    nlohmann::json j = nlohmann::json::parse(sidecar_stream);
+    CHECK(j["load_fingerprint"]["measured"] == true);
+    CHECK_THAT(j["load_fingerprint"]["flow_multiplier_g_per_e"].get<double>(),
+               Catch::Matchers::WithinAbs(0.0378, 1e-6));
+    CHECK_THAT(j["load_fingerprint"]["flow_ceiling_mm_s"].get<double>(),
+               Catch::Matchers::WithinAbs(12.0, 1e-6));
 
     boost::filesystem::remove(gcode_path);
     boost::filesystem::remove(sidecar);

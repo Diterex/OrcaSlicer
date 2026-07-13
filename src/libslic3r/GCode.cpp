@@ -348,6 +348,16 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             {"predicted_mode", a.stability.predicted_mode},
             {"failing_z_mm", a.stability.failing_z_mm},
         };
+        // Load fingerprint: the material state this print assumed, from the
+        // machine flow check (Track B6 / blob-scale). Tags every sliced
+        // G-code with the batch it was calibrated against (clay-rules KB
+        // rule 9/11: results carry their assumed material state).
+        j["load_fingerprint"] = {
+            {"flow_multiplier_g_per_e", print.config().ldm_flow_multiplier_measured.value},
+            {"flow_ceiling_mm_s", print.config().ldm_flow_ceiling_mm_s.value},
+            {"measured", print.config().ldm_flow_multiplier_measured.value > 0.
+                          || print.config().ldm_flow_ceiling_mm_s.value > 0.},
+        };
         j["support_margin_field"] = nlohmann::json::array();
         for (const ClaySupportMarginLoop &loop : a.support_margin_field)
             j["support_margin_field"].push_back({
