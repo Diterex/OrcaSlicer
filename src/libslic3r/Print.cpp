@@ -1663,6 +1663,21 @@ void Print::update_clay_body_continuity_analysis() const
         return std::sqrt(best2);
     };
 
+    // Rule 10 (shrinkage / abrupt section-change): the wall's enclosed area is
+    // the section scalar; an abrupt |dA/A| step between adjacent body layers is
+    // the drying-shrinkage/cracking signature (distinct from B2's outward-step
+    // magnitude). Reuses the same outer-wall points the B2 loop resamples.
+    auto polygon_area_mm2 = [](const std::vector<Vec2d> &poly) {
+        double a2 = 0.0;
+        const size_t n = poly.size();
+        for (size_t k = 0; k < n; ++ k)
+            a2 += poly[k].x() * poly[(k + 1) % n].y() - poly[(k + 1) % n].x() * poly[k].y();
+        return std::abs(a2) * 0.5;
+    };
+    double prev_section_area = -1.0;
+    double section_peak_ratio = 0.0;
+    double section_peak_z = -1.0;
+
     auto &summary = analysis.support_margin_summary;
     std::vector<Vec2d> prev_wall;
     int    prev_layer_idx = -1;
@@ -1676,7 +1691,22 @@ void Print::update_clay_body_continuity_analysis() const
         if (wall.size() < 3) {
             prev_wall.clear();
             prev_layer_idx = -1;
+            prev_section_area = -1.0;
             continue;
+        }
+        // Rule 10: track the worst adjacent-layer relative section change in the
+        // body region. Base layers are excluded (the structured base legitimately
+        // changes section as it transitions into the spiral body).
+        if (i >= base_layers) {
+            const double area = polygon_area_mm2(wall);
+            if (prev_section_area > EPSILON) {
+                const double ratio = std::abs(area - prev_section_area) / prev_section_area;
+                if (ratio > section_peak_ratio) {
+                    section_peak_ratio = ratio;
+                    section_peak_z = layer->print_z;
+                }
+            }
+            prev_section_area = area;
         }
         if (!prev_wall.empty() && prev_layer_idx == i - 1) {
             ClaySupportMarginLoop loop_field;
@@ -2049,6 +2079,47 @@ void Print::update_clay_body_continuity_analysis() const
                 else if (analysis.overall_risk_level != "high_risk")
                     analysis.overall_risk_level = "guarded";
             }
+        }
+    }
+
+    // ---- Rule 10: abrupt section-change / drying-shrinkage screen ----
+    // Informational: a sharp step in wall section between adjacent body layers
+    // is a drying-shrinkage/cracking risk marker. Config default is active;
+    // ldm_max_section_change_ratio = 0 disables. Inert on straight walls (the
+    // tumbler control), so it never trips the standing control gate.
+    {
+        const double thr = m_config.ldm_max_section_change_ratio.value;
+        if (thr > EPSILON && section_peak_ratio > thr) {
+            analysis.section_change.detected = true;
+            analysis.section_change.peak_ratio = section_peak_ratio;
+            analysis.section_change.z_mm = section_peak_z;
+            analysis.warnings.push_back({"LDM_SECTION_CHANGE_ABRUPT", "medium", "shrinkage",
+                L("LDM Vase Plus found an abrupt change in wall cross-section between adjacent layers; uneven sections drive shrinkage and cracking as the clay dries."),
+                Slic3r::format("peak_section_change_ratio=%.3f at z=%.2f", section_peak_ratio, section_peak_z),
+                section_peak_z});
+            if (analysis.overall_risk_level != "high_risk")
+                analysis.overall_risk_level = "guarded";
+        }
+    }
+
+    // ---- Rule 4: plasticity / curvature-sensitivity ----
+    // Curved or overhanging forms succeed or fail on clay plasticity. The B4
+    // stability screen only runs with calibrated material properties; when it
+    // did not evaluate (the common pre-Track-D case), a curvature-sensitive
+    // form otherwise gets no material signal at all. Info-level; never gates.
+    if (!analysis.stability.evaluated) {
+        int body_overhang_layers = 0;
+        for (int i = base_layers; i < int(layer_stats.size()); ++ i)
+            if (layer_stats[i].overhang_runs >= 1)
+                ++ body_overhang_layers;
+        const bool curvature_sensitive =
+            body_overhang_layers >= 3 || any_failing || any_marginal || analysis.section_change.detected;
+        if (curvature_sensitive) {
+            analysis.material_sensitive_geometry = true;
+            analysis.warnings.push_back({"LDM_MATERIAL_SENSITIVE", "info", "plasticity",
+                L("This form has curved or overhanging regions whose success depends on clay plasticity. Set the LDM material properties (Track D calibration) to enable quantitative stability screening."),
+                Slic3r::format("body_overhang_layers=%d", body_overhang_layers),
+                -1.0});
         }
     }
 }

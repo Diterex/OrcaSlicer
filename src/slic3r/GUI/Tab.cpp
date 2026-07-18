@@ -3053,6 +3053,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("ldm_nominal_bead_width_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-nominal-bead-width");
         optgroup->append_single_option_line("ldm_nominal_layer_height_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-nominal-layer-height");
         optgroup->append_single_option_line("ldm_max_unsupported_step_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-max-unsupported-step");
+        optgroup->append_single_option_line("ldm_max_section_change_ratio", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-max-section-change-ratio");
         optgroup->append_single_option_line("ldm_min_turn_radius_mm", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-min-turn-radius");
         optgroup->append_single_option_line("ldm_reservoir_current_ml", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-reservoir-current-fill");
         optgroup->append_single_option_line("ldm_flow_multiplier_measured", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#ldm-measured-flow-multiplier");

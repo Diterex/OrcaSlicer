@@ -468,6 +468,14 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             {"predicted_mode", a.stability.predicted_mode},
             {"failing_z_mm", a.stability.failing_z_mm},
         };
+        // Rule 10 (section-change / shrinkage) and rule 4 (plasticity /
+        // curvature-sensitivity) screens.
+        j["section_change"] = {
+            {"detected", a.section_change.detected},
+            {"peak_ratio", a.section_change.peak_ratio},
+            {"z_mm", a.section_change.z_mm},
+        };
+        j["material_sensitive_geometry"] = a.material_sensitive_geometry;
         // Load fingerprint: the material state this print assumed, from the
         // machine flow check (Track B6 / blob-scale). Tags every sliced
         // G-code with the batch it was calibrated against (clay-rules KB

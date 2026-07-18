@@ -601,6 +601,84 @@ TEST_CASE("LDM reservoir check warns with a run-dry height when capacity is exce
     CHECK(refill->z_hint_mm <= 20.0);
 }
 
+static bool has_warning(const Slic3r::ClayVasePlusAnalysisResult &a, const char *code)
+{
+    return std::any_of(a.warnings.begin(), a.warnings.end(),
+        [code](const auto &w) { return w.code == code; });
+}
+
+TEST_CASE("LDM section-change: a straight-walled cube stays quiet (rule 10)", "[Print][ClayVasePlus][SectionChange]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    // Constant cross-section -> no abrupt section change, and no overhang -> no
+    // material-sensitivity flag. This is the standing tumbler-style control.
+    CHECK_FALSE(analysis.section_change.detected);
+    CHECK_FALSE(analysis.material_sensitive_geometry);
+    CHECK_FALSE(has_warning(analysis, "LDM_SECTION_CHANGE_ABRUPT"));
+    CHECK_FALSE(has_warning(analysis, "LDM_MATERIAL_SENSITIVE"));
+}
+
+TEST_CASE("LDM section-change: a sphere's rapidly changing section is flagged (rule 10)", "[Print][ClayVasePlus][SectionChange]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    // Near the poles the wall's enclosed area changes sharply between adjacent
+    // layers, exceeding the default 0.30 section-change ratio.
+    CHECK(analysis.section_change.detected);
+    CHECK(analysis.section_change.peak_ratio > 0.30);
+    CHECK(has_warning(analysis, "LDM_SECTION_CHANGE_ABRUPT"));
+}
+
+TEST_CASE("LDM material-sensitivity: an overhang with no material props is flagged (rule 4)", "[Print][ClayVasePlus][Plasticity]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // 45-degree wall = sustained overhang; with no ldm_wet_yield_strength the
+    // B4 stability screen cannot evaluate, so the plasticity note must fill in.
+    Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    REQUIRE_FALSE(analysis.stability.evaluated);
+    CHECK(analysis.material_sensitive_geometry);
+    CHECK(has_warning(analysis, "LDM_MATERIAL_SENSITIVE"));
+}
+
+TEST_CASE("LDM material-sensitivity: quiet once material props are declared (rule 4)", "[Print][ClayVasePlus][Plasticity]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // With material properties set, the B4 stability screen owns the material
+    // judgement and the info-level plasticity fallback must step aside.
+    Slic3r::Test::init_print({TestMesh::slopy_cube}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_nominal_bead_width_mm", 4.62 },
+        { "filament_density", "1.9" },
+        { "ldm_wet_yield_strength", "5.0" },
+        { "ldm_e_modulus", "300.0" }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.stability.evaluated);
+    CHECK_FALSE(has_warning(analysis, "LDM_MATERIAL_SENSITIVE"));
+}
+
 TEST_CASE("LDM bead compression check flags a high ratio when the nominal bead is absurdly narrow", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;

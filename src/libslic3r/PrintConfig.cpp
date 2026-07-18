@@ -6390,6 +6390,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
+    def = this->add("ldm_max_section_change_ratio", coFloat);
+    def->label = L("Clay max section-change ratio");
+    def->category = L("Process");
+    def->tooltip = L("Maximum relative change in wall cross-section (enclosed area) between adjacent body layers before LDM Vase Plus flags a drying-shrinkage/cracking risk. Uneven sections dry unevenly and crack. 0 disables the check.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.30));
+
     def = this->add("ldm_reservoir_current_ml", coFloat);
     def->label = L("Clay reservoir current fill");
     def->category = L("Process");
