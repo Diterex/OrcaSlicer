@@ -6455,6 +6455,22 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("ldm_nonplanar_enable", coBool);
+    def->label = L("Clay non-planar (C1 warped spiral)");
+    def->category = L("Process");
+    def->tooltip = L("Track C1: locally warp the spiral-vase Z profile to relieve marginal unsupported outward steps (step-relief), driven by the LDM Vase Plus support-margin analysis. Off = stock spiral output is byte-identical. Only affects spiral/vase clay prints.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("ldm_slump_budget_frac", coFloat);
+    def->label = L("Clay slump budget");
+    def->category = L("Process");
+    def->tooltip = L("Maximum local Z dip the C1 warped spiral may apply, as a fraction of the layer height. The wet-clay slump budget; calibrated by the Track D slump ladder. 0 disables the warp even when non-planar is enabled.");
+    def->min = 0;
+    def->max = 0.5;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.35));
+
     def = this->add("spiral_mode_smooth", coBool);
     def->label = L("Smooth Spiral");
     def->tooltip = L("Smooth Spiral smooths out X and Y moves as well, "

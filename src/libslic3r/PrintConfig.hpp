@@ -1789,6 +1789,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBool,               ldm_continuous_path_required))
     ((ConfigOptionBool,               ldm_disable_retracts))
     ((ConfigOptionBool,               ldm_disable_z_hop))
+    ((ConfigOptionBool,               ldm_nonplanar_enable))
+    ((ConfigOptionFloat,              ldm_slump_budget_frac))
     ((ConfigOptionString,             filename_format))
     ((ConfigOptionStrings,            post_process))
     ((ConfigOptionString,             printer_model))

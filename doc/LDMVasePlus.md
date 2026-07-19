@@ -374,6 +374,26 @@ disturbances.
 Warns (`LDM_ZHOP_WARNING`) when Z-hop is active: lift events break bead
 continuity and leave witness marks in soft material.
 
+### Clay non-planar (C1 warped spiral)
+
+`ldm_nonplanar_enable` (default off) and `ldm_slump_budget_frac` (default 0.35)
+
+Track C1 (in development). When enabled on a spiral/vase clay print, the
+spiral's per-vertex Z profile is *locally warped* to relieve marginal
+unsupported outward steps (step-relief), driven by the support-margin
+analysis: where a loop steps out close to the process envelope, part of that
+horizontal step is converted into along-wall slope by dipping the loop's Z.
+
+- **Off (default):** stock spiral-vase output is **byte-identical** — the
+  warp is gated behind clay mode + this option, and adds nothing when off.
+- `ldm_slump_budget_frac`: the maximum local Z dip as a fraction of layer
+  height (the wet-clay slump budget, Track-D-calibrated). 0 disables the warp
+  even when non-planar is enabled.
+
+Bounded per-loop warp only rescues mild/transient overhangs; vertically
+persistent flares need the cumulative Z-warp field (Track C2). See
+`docs/c1-slicer-integration-plan.md` in the CeramicaSlicer project.
+
 ### LDM start G-code mode
 
 `ldm_start_gcode_mode` — Stock | Clay native (default Stock),

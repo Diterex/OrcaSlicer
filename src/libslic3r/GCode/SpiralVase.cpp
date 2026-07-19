@@ -128,7 +128,7 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_layer)
 
     float len = 0.f;
     SpiralVase::SpiralPoint last_point = previous_layer != NULL && previous_layer->size() >0? previous_layer->at(previous_layer->size()-1): SpiralVase::SpiralPoint(0,0);
-    m_reader.parse_buffer(gcode, [&new_gcode, &z, total_layer_length, layer_height, transition_in, &len, &current_layer, &previous_layer, &transition_gcode, transition_out, smooth_spiral, &max_xy_dist_for_smoothing, &last_point, starting_flowrate, finishing_flowrate, min_segment_length]
+    m_reader.parse_buffer(gcode, [this, &new_gcode, &z, total_layer_length, layer_height, transition_in, &len, &current_layer, &previous_layer, &transition_gcode, transition_out, smooth_spiral, &max_xy_dist_for_smoothing, &last_point, starting_flowrate, finishing_flowrate, min_segment_length]
         (GCodeReader &reader, GCodeReader::GCodeLine line) {
         if (line.cmd_is("G1")) {
             // Orca: Filter out retractions at layer change
@@ -159,8 +159,11 @@ std::string SpiralVase::process_layer(const std::string &gcode, bool last_layer)
                             transitionLine.set(E, line.e() * finishing_e_factor, 5 /*decimal_digits*/);
                             transition_gcode += transitionLine.raw() + '\n';
                         }
-                        // This line is the core of Spiral Vase mode, ramp up the Z smoothly
-                        line.set(Z, z + factor * layer_height);
+                        // This line is the core of Spiral Vase mode, ramp up the Z smoothly.
+                        // Track C1: add the (bounded, loop-smooth) non-planar warp; warp_dz
+                        // returns 0 unless clay non-planar is enabled, so stock output is
+                        // byte-identical.
+                        line.set(Z, z + factor * layer_height + this->warp_dz(factor));
                         if (smooth_spiral) {
                             // Now we also need to try to interpolate X and Y
                             SpiralVase::SpiralPoint p(line.x(), line.y()); // Get current x/y coordinates

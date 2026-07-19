@@ -3061,6 +3061,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("ldm_continuous_path_required", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#require-continuous-ldm-path");
         optgroup->append_single_option_line("ldm_disable_retracts", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#prefer-no-retracts");
         optgroup->append_single_option_line("ldm_disable_z_hop", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#prefer-no-z-hop");
+        optgroup->append_single_option_line("ldm_nonplanar_enable", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#clay-non-planar-c1-warped-spiral");
+        optgroup->append_single_option_line("ldm_slump_budget_frac", "https://github.com/Diterex/OrcaSlicer/blob/clay-vase-plus/doc/LDMVasePlus.md#clay-slump-budget");
 
         optgroup = page->new_optgroup(L("Fuzzy skin"), L"fuzzy_skin");
         optgroup->append_single_option_line("fuzzy_skin", "others_settings_fuzzy_skin");
