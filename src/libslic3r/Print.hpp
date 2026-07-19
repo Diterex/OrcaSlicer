@@ -774,6 +774,12 @@ struct WipeTowerData
         number_of_toolchanges = -1;
         depth = 0.f;
         brim_width = 0.f;
+        // height was previously left uninitialized here; the BBL wipe-tower path
+        // does not set it (only the WipeTower2 path does), so first_layer_wipe_tower_corners()
+        // read garbage into the stabilization-cone radius -> out-of-range skirt
+        // coordinates (a layout/arch-dependent crash). Reset it like depth.
+        height = 0.f;
+        bbx = BoundingBoxf();
         rib_offset = Vec2f::Zero();
         wipe_tower_mesh_data  = std::nullopt;
     }

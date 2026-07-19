@@ -4908,6 +4908,10 @@ void Print::_make_wipe_tower()
         wipe_tower.generate_new(m_wipe_tower_data.tool_changes);
         m_wipe_tower_data.depth      = wipe_tower.get_depth();
         m_wipe_tower_data.brim_width = wipe_tower.get_brim_width();
+        // Set height on this (BBL) path too - first_layer_wipe_tower_corners()
+        // uses it for the stabilization-cone radius; leaving it unset read
+        // uninitialized memory and produced out-of-range skirt coordinates.
+        m_wipe_tower_data.height     = wipe_tower.get_height();
         m_wipe_tower_data.bbx = wipe_tower.get_bbx();
         m_wipe_tower_data.rib_offset = wipe_tower.get_rib_offset();
 
