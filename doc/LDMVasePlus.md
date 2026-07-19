@@ -267,6 +267,26 @@ The admissible horizontal step of one wall loop past the loop below.
 Loops stepping beyond this are `failing` and produce
 `LDM_SUPPORT_MARGIN_FAILING` with the worst Z.
 
+### LDM max section-change ratio
+
+`ldm_max_section_change_ratio` (default 0.30, 0 = disabled)
+
+The largest relative change in the wall's enclosed cross-section (area)
+between two adjacent body layers before a drying-shrinkage/cracking risk
+is flagged (clay-rules KB rule 10, *shrinkage_requires_even_sections*).
+This is distinct from the support-margin check: that measures the
+*magnitude* of an outward step; this measures the *rate of change* of the
+overall section up the height, the signal that drives uneven drying and
+cracking.
+
+- **0.30 (default):** corpus-derived; inert on straight-walled forms (the
+  tumbler control never trips it), fires on forms whose section jumps
+  sharply layer-to-layer.
+- **0 or below:** check disabled.
+
+Produces `LDM_SECTION_CHANGE_ABRUPT` (medium) with the peak ratio and its
+Z. Informational — it never gates.
+
 ### LDM min turn radius
 
 `ldm_min_turn_radius_mm` (default 0 = disabled)
@@ -384,6 +404,8 @@ continuity and leave witness marks in soft material.
 | `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
 | `LDM_BEAD_COMPRESSION_LOW` / `LDM_BEAD_COMPRESSION_HIGH` | Mean effective layer height vs. `ldm_nominal_bead_width_mm` ratio is outside the safe keying band (too high: poor interlayer keying; too low: over-compressed bead) |
 | `LDM_TURN_RADIUS_TIGHT` | Measured in-plane turn radius (incl. sharp corners) below `ldm_min_turn_radius_mm`, with the worst Z |
+| `LDM_SECTION_CHANGE_ABRUPT` | Relative wall cross-section change between adjacent body layers exceeds `ldm_max_section_change_ratio` (drying-shrinkage/cracking risk), with the peak ratio and its Z |
+| `LDM_MATERIAL_SENSITIVE` | Info: curved/overhanging geometry whose success depends on clay plasticity, raised only when no material properties are declared so the B4 stability screen cannot evaluate (clay-rules KB rule 4). Set `ldm_wet_yield_strength`/`ldm_e_modulus` (Track D) for quantitative screening instead |
 
 ### In-app risk panel (G-code preview)
 

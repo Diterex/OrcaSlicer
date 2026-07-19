@@ -4034,7 +4034,11 @@ int WipeTower::get_wall_filament_for_all_layer()
     int filament_id    = -1;
     int filament_count = 0;
     for (auto iter = filament_counts.begin(); iter != filament_counts.end(); ++iter) {
-        if (m_filament_categories[iter->first] == selected_category && iter->second > filament_count) {
+        // m_filament_categories may be shorter than the filament id space for a
+        // partial config; indexing past the end is a heap-buffer-overflow. A
+        // filament with no declared category simply cannot match selected_category.
+        if (iter->first >= 0 && size_t(iter->first) < m_filament_categories.size()
+            && m_filament_categories[iter->first] == selected_category && iter->second > filament_count) {
             filament_id    = iter->first;
             filament_count = iter->second;
         }

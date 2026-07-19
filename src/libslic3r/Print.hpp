@@ -774,6 +774,12 @@ struct WipeTowerData
         number_of_toolchanges = -1;
         depth = 0.f;
         brim_width = 0.f;
+        // height was previously left uninitialized here; the BBL wipe-tower path
+        // does not set it (only the WipeTower2 path does), so first_layer_wipe_tower_corners()
+        // read garbage into the stabilization-cone radius -> out-of-range skirt
+        // coordinates (a layout/arch-dependent crash). Reset it like depth.
+        height = 0.f;
+        bbx = BoundingBoxf();
         rib_offset = Vec2f::Zero();
         wipe_tower_mesh_data  = std::nullopt;
     }
@@ -959,9 +965,20 @@ struct ClayStabilityScreen
     double      failing_z_mm { -1.0 };
 };
 
+// Rule 10 (shrinkage_requires_even_sections): abrupt cross-section change
+// across height drives drying shrinkage/cracking. Distinct from B2's outward-
+// step magnitude - this is the *rate of change* of the wall's enclosed section
+// between adjacent body layers. peak_ratio is the worst |dA/A| step observed.
+struct ClayVasePlusSectionChange
+{
+    bool   detected { false };
+    double peak_ratio { 0.0 };
+    double z_mm { -1.0 };
+};
+
 struct ClayVasePlusAnalysisResult
 {
-    int                                  analysis_version { 1 };
+    int                                  analysis_version { 2 };
     bool                                 clay_mode_active { false };
     std::string                          overall_risk_level { "not_applicable" };
     std::string                          risk_distribution_mode { "clean_control" };
@@ -974,6 +991,11 @@ struct ClayVasePlusAnalysisResult
     // B2 queryable field; empty unless clay mode is active and walls exist.
     std::vector<ClaySupportMarginLoop>   support_margin_field;
     ClayStabilityScreen                  stability;
+    // Rule 10: abrupt section-change / drying-shrinkage screen.
+    ClayVasePlusSectionChange            section_change;
+    // Rule 4: curved/overhanging geometry whose success depends on clay
+    // plasticity, flagged when no calibrated material properties exist.
+    bool                                 material_sensitive_geometry { false };
 };
 
 enum FilamentTempType {
