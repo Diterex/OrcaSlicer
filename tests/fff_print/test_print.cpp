@@ -852,6 +852,10 @@ TEST_CASE("LDM Vase Plus writes an analysis sidecar next to exported G-code", "[
     // No flow check entered: the fingerprint must exist but say unmeasured.
     CHECK(j["load_fingerprint"]["measured"] == false);
 
+    // Close the read handle before removing: on Windows removing a still-open
+    // file is a sharing violation (POSIX allows unlinking an open file, so this
+    // only bit the Windows test runs).
+    sidecar_stream.close();
     boost::filesystem::remove(gcode_path);
     boost::filesystem::remove(sidecar);
 }
@@ -885,6 +889,9 @@ TEST_CASE("LDM sidecar tags the print with the measured load fingerprint", "[Pri
     CHECK_THAT(j["load_fingerprint"]["flow_ceiling_mm_s"].get<double>(),
                Catch::Matchers::WithinAbs(12.0, 1e-6));
 
+    // Close the read handle before removing (Windows: removing an open file is
+    // a sharing violation).
+    sidecar_stream.close();
     boost::filesystem::remove(gcode_path);
     boost::filesystem::remove(sidecar);
 }
