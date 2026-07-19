@@ -480,8 +480,8 @@ private:
     bool   m_enable_wrapping_detection = false;
 	bool   m_enable_timelapse_print = false;
 	bool   m_semm               = true; // Are we using a single extruder multimaterial printer?
-    Vec2f  m_wipe_tower_pos; 			// Left front corner of the wipe tower in mm.
-	float  m_wipe_tower_width; 			// Width of the wipe tower.
+    Vec2f  m_wipe_tower_pos {Vec2f::Zero()};	// Left front corner of the wipe tower in mm.
+	float  m_wipe_tower_width = 0.f;		// Width of the wipe tower.
 	float  m_wipe_tower_depth 	= 0.f; 	// Depth of the wipe tower
 	// BBS
 	float  m_wipe_tower_height = 0.f;
@@ -500,7 +500,9 @@ private:
     Vec2f            m_origin;
     std::vector<int>    m_last_layer_id;
     std::pair<std::vector<double>,std::vector<double>> m_filaments_change_length;//[0]extruder change [1]nozzle change
-    size_t       m_cur_layer_id;
+    size_t       m_cur_layer_id = 0; // uninitialized here previously; used as a
+                                     // layer index (block.layer_depths[...]) - a
+                                     // garbage value is an out-of-bounds read.
     NozzleChangeResult m_nozzle_change_result;
     bool               m_has_tpu_filament{false};
     bool               m_is_multi_extruder{false};
@@ -544,9 +546,9 @@ private:
         RectangularBed,
         CircularBed,
         CustomBed
-    } m_bed_shape;
-    float m_bed_width; // width of the bed bounding box
-    Vec2f m_bed_bottom_left; // bottom-left corner coordinates (for rectangular beds)
+    } m_bed_shape = RectangularBed;
+    float m_bed_width = 0.f; // width of the bed bounding box
+    Vec2f m_bed_bottom_left {Vec2f::Zero()}; // bottom-left corner coordinates (for rectangular beds)
 
     float m_first_layer_flow_ratio;
 	float m_perimeter_width = 0.4f * Width_To_Nozzle_Ratio; // Width of an extrusion line, also a perimeter spacing for 100% infill.

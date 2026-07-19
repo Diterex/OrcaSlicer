@@ -778,18 +778,23 @@ struct WipeTowerData
     std::vector<std::vector<WipeTower::ToolChangeResult>> tool_changes;
     std::unique_ptr<WipeTower::ToolChangeResult>          final_purge;
     std::vector<float>                                    used_filament;
-    int                                                   number_of_toolchanges;
+    // These scalar members previously had no initializer and relied on clear()
+    // running first; a code path that reads them before the wipe tower is
+    // generated (e.g. first_layer_wipe_tower_corners feeding the skirt) then
+    // reads uninitialized memory - a layout/architecture-dependent crash. Give
+    // them explicit defaults so they are never garbage.
+    int                                                   number_of_toolchanges = -1;
 
     // Depth of the wipe tower to pass to GLCanvas3D for exact bounding box:
-    float                                                 depth;
+    float                                                 depth = 0.f;
     // Effective width (a rib wall squares the tower): the estimate until generation, then the
     // generated width, so it never disagrees with depth.
-    float                                                 width;
+    float                                                 width = 0.f;
     std::vector<std::pair<float, float>>                  z_and_depth_pairs;
-    float                                                 brim_width;
-    float                                                 height;
+    float                                                 brim_width = 0.f;
+    float                                                 height = 0.f;
     BoundingBoxf                                          bbx;//including brim
-    Vec2f                                                 rib_offset;
+    Vec2f                                                 rib_offset { Vec2f::Zero() };
     std::optional<WipeTowerMeshData>                      wipe_tower_mesh_data;//added rib_offset
     void clear() {
         priming.reset(nullptr);
