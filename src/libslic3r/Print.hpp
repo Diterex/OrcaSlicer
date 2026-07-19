@@ -801,6 +801,9 @@ struct WipeTowerData
         width = 0.f;
         brim_width = 0.f;
         height = 0.f;
+        // bbx was not reset here; a stale bounding box can outlive the data it
+        // described. Reset it alongside the other scalars.
+        bbx = BoundingBoxf();
         rib_offset = Vec2f::Zero();
         wipe_tower_mesh_data  = std::nullopt;
     }
