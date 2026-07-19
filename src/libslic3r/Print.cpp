@@ -4155,8 +4155,16 @@ void Print::_make_wipe_tower()
         for (size_t nozzle_id = 0; nozzle_id < nozzle_nums; ++nozzle_id) {
             std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, nozzle_id, nozzle_nums)));
             std::vector<std::vector<float>> wipe_volumes;
-            for (unsigned int i = 0; i < number_of_extruders; ++i)
-                wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
+            // Guard against an undersized flush_volumes_matrix: the row slicing
+            // assumes number_of_extruders^2 entries per nozzle; fewer would read
+            // past the end (heap-buffer-overflow).
+            const bool have_full_matrix = flush_matrix.size() >= size_t(number_of_extruders) * number_of_extruders;
+            for (unsigned int i = 0; i < number_of_extruders; ++i) {
+                if (have_full_matrix)
+                    wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
+                else
+                    wipe_volumes.push_back(std::vector<float>(number_of_extruders, 0.f));
+            }
 
             multi_extruder_flush.emplace_back(wipe_volumes);
         }
