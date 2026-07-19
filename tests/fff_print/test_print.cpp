@@ -679,6 +679,75 @@ TEST_CASE("LDM material-sensitivity: quiet once material props are declared (rul
     CHECK_FALSE(has_warning(analysis, "LDM_MATERIAL_SENSITIVE"));
 }
 
+// ---- Edge cases / robustness for the analysis engine ----
+
+TEST_CASE("LDM section-change: ratio 0 disables the check even on a sphere", "[Print][ClayVasePlus][SectionChange]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // The sphere trips section-change at the default 0.30; 0 must disable it.
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_max_section_change_ratio", 0.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK_FALSE(analysis.section_change.detected);
+    CHECK_FALSE(has_warning(analysis, "LDM_SECTION_CHANGE_ABRUPT"));
+}
+
+TEST_CASE("LDM section-change: a very high ratio is not tripped by a sphere", "[Print][ClayVasePlus][SectionChange]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // No physical per-layer section change reaches 500%; the upper gate holds.
+    Slic3r::Test::init_print({TestMesh::sphere_50mm}, print, model, {
+        { "ldm_modded_printer", true },
+        { "ldm_max_section_change_ratio", 5.0 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK_FALSE(analysis.section_change.detected);
+}
+
+TEST_CASE("LDM analysis: object with no body layers does not crash and reads clean", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // bottom_shell_layers larger than the layer count makes every layer a base
+    // layer, so the body-region loops iterate zero times - an edge that must be
+    // handled gracefully (no crash, no false body-risk).
+    Slic3r::Test::init_print({cube(20)}, print, model, {
+        { "ldm_modded_printer", true },
+        { "bottom_shell_layers", 150 }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.risk_distribution_mode == "clean_control");
+    CHECK_FALSE(analysis.body_fragmentation_zone.detected);
+    CHECK_FALSE(analysis.section_change.detected);
+}
+
+TEST_CASE("LDM analysis: a multi-object plate is analyzed without crashing", "[Print][ClayVasePlus]")
+{
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // The pass analyzes the first object that has layers; two plain cubes must
+    // classify clean_control and not fault on the multi-object plate.
+    Slic3r::Test::init_print({cube(20), cube(20)}, print, model, {
+        { "ldm_modded_printer", true }
+    });
+    print.process();
+
+    const auto &analysis = print.clay_vase_plus_analysis();
+    CHECK(analysis.clay_mode_active);
+    CHECK(analysis.risk_distribution_mode == "clean_control");
+}
+
 TEST_CASE("LDM bead compression check flags a high ratio when the nominal bead is absurdly narrow", "[Print][ClayVasePlus]")
 {
     Slic3r::Print print;
