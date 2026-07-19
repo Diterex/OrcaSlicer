@@ -56,6 +56,9 @@ jobs:
     permissions:
       contents: read
       checks: write
+      # publish-unit-test-result-action posts a PR comment; without this it
+      # 403s and reds the job even when every test passed.
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -88,6 +91,9 @@ jobs:
           path: build/tests/**/*.log
       - name: Publish Test Results
         if: always()
+        # Best-effort: a comment/check-publish failure (e.g. read-only token on
+        # fork PRs) must never fail the job when the tests themselves passed.
+        continue-on-error: true
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: "ctest_results.xml"
