@@ -3151,10 +3151,13 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("ldm_wet_yield_strength", coFloats);
     def->label = L("LDM wet yield strength");
-    def->tooltip = L("Yield strength of the wet paste as printed (printable clay bodies are typically 4-20 kPa). "
-                     "With density and bead width declared, enables the LDM self-weight stability screening: "
-                     "warns when the accumulated weight above a layer approaches what the wet material can carry. "
-                     "0 disables the screening. Calibrate with a squash-cylinder print.");
+    def->tooltip = L("[Prototype - uncalibrated] Yield strength of the wet paste as printed (printable clay bodies "
+                     "are typically 4-20 kPa). With density and bead width declared, enables the LDM self-weight "
+                     "stability screening: warns when the accumulated weight above a layer approaches what the wet "
+                     "material can carry. 0 disables the screening. NOTE: the stability screening is an experimental "
+                     "prototype whose model and defaults are order-of-magnitude values adapted from concrete-printing "
+                     "literature, NOT validated on real clay - treat its warnings as screening, not truth. Calibrate "
+                     "with a squash-cylinder print (Track D).");
     def->sidetext = L("kPa");
     def->min = 0;
     def->mode = comAdvanced;
@@ -3162,10 +3165,11 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("ldm_e_modulus", coFloats);
     def->label = L("LDM wet elastic modulus");
-    def->tooltip = L("Elastic modulus of the wet paste (printable clay bodies are typically 300-1000 kPa). "
-                     "Enables the shell-buckling part of the LDM stability screening: a slender wall can bow "
-                     "sideways well below the squash limit. 0 disables the buckling screen. "
-                     "Calibrate with a thin-wall tube printed to failure.");
+    def->tooltip = L("[Prototype - uncalibrated] Elastic modulus of the wet paste (printable clay bodies are "
+                     "typically 300-1000 kPa). Enables the shell-buckling part of the LDM stability screening: a "
+                     "slender wall can bow sideways well below the squash limit. 0 disables the buckling screen. "
+                     "Part of the same experimental, not-yet-clay-validated stability prototype as wet yield "
+                     "strength. Calibrate with a thin-wall tube printed to failure (Track D).");
     def->sidetext = L("kPa");
     def->min = 0;
     def->mode = comAdvanced;

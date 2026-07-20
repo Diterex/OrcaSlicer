@@ -99,11 +99,14 @@ jobs:
           files: "ctest_results.xml"
 
   trust_gate:
-    # The roadmap's trust gate as a regression test: slice the three
-    # case-study corpus models with the freshly built slicer and assert the
-    # classifications (tumbler=clean_control, Julia=body_spread,
-    # Julia+MOP=base_concentrated).
-    name: Clay Trust Gate
+    # Corpus regression check (output-stability, NOT hardware validation):
+    # slice the three case-study corpus models with the freshly built slicer
+    # and assert the analysis still classifies them the same
+    # (tumbler=clean_control, Julia=body_spread, Julia+MOP=base_concentrated).
+    # Green means the analysis output has not drifted, not that the clay
+    # predictions are physically correct. Job key stays `trust_gate` for
+    # compatibility with the `needs:` references below.
+    name: Clay Corpus Regression Check
     runs-on: ubuntu-24.04-arm
     needs: build_linux
     if: ${{ !cancelled() && success() }}
@@ -128,7 +131,7 @@ jobs:
         run: |
           chmod +x OrcaSlicer_Linux_AppImage*.AppImage
           ./OrcaSlicer_Linux_AppImage*.AppImage --appimage-extract > /dev/null
-      - name: Run trust gate
+      - name: Run corpus regression check
         timeout-minutes: 30
         run: |
           xvfb-run -a python3 scripts/clay_trust_gate.py \
