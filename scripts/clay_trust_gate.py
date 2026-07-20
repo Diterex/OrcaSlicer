@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
-"""LDM Vase Plus trust gate: slice the corpus, classify, assert.
+"""LDM Vase Plus corpus regression check (historically the "trust gate").
 
-The unified roadmap's trust gate requires the analysis vocabulary to match
-the three case studies before any path-changing code ships:
+WHAT THIS DOES AND DOES NOT PROVE. This is an OUTPUT-STABILITY / regression
+check, not a validation of clay behavior. It re-slices the 3-model corpus and
+asserts the analysis still sorts each into its known label; that proves the
+slicer's analysis vocabulary has not drifted across a code change. It does
+NOT prove the predictions are physically correct — nothing here is checked
+against a real clay print, and the classification thresholds below are
+distilled from these same three files. A green result therefore means
+"analysis output unchanged on the known corpus", NOT "predictions verified
+against reality". The name is kept only for path/CI compatibility; think of
+it as a corpus regression check.
+
+The check requires the analysis vocabulary to match the three case studies:
 
     tumbler control      -> clean_control
     Julia baseline       -> body_spread

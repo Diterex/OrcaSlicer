@@ -200,6 +200,18 @@ families are planned once real measured dimensions are collected.)
 
 ## Material settings (Filament tab → Basic information, under Density)
 
+> ⚠️ **Prototype — not calibrated, not clay-validated.** The self-weight
+> stability screening described in this section (squash / shell-buckle /
+> cantilever, driven by the two properties below) is an **experimental
+> prototype**. Its model is adapted from the 3D-concrete-printing literature
+> (Suiker; Wolfs/Bos/Salet) and its behaviour has **never been checked against
+> a real clay print.** It is **off by default** (both properties default to 0)
+> and, even when enabled, its output is **screening, not truth** — treat any
+> `LDM_STABILITY_*` warning as "worth a look", not a verdict. Calibrating it
+> for your clay is exactly what the Track D session is for. The geometry-based
+> checks (continuity, support-margin, section-change) do **not** depend on
+> this and need no calibration.
+
 ### LDM wet yield strength
 
 `ldm_wet_yield_strength` — kPa (default 0 = screening off)
@@ -401,7 +413,7 @@ continuity and leave witness marks in soft material.
 | `LDM_NARROW_GAP_MEDIUM` | Sub-bead rescue structure in the base region |
 | `LDM_SUPPORT_MARGIN_MARGINAL` / `LDM_SUPPORT_MARGIN_FAILING` | Outward step near / beyond the admissible envelope, with the worst Z |
 | `LDM_RESERVOIR_REFILL` | Print volume exceeds the reservoir (or the declared current fill, if set); includes the run-dry Z height |
-| `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height |
+| `LDM_STABILITY_SQUASH` / `LDM_STABILITY_BUCKLE` / `LDM_STABILITY_CANTILEVER` | **(Uncalibrated prototype)** Self-weight stability screening near (medium) or beyond (high) the limit, with mode, utilization, and the failing height. Model adapted from concrete printing, not yet clay-validated — screening, not truth |
 | `LDM_BEAD_COMPRESSION_LOW` / `LDM_BEAD_COMPRESSION_HIGH` | Mean effective layer height vs. `ldm_nominal_bead_width_mm` ratio is outside the safe keying band (too high: poor interlayer keying; too low: over-compressed bead) |
 | `LDM_TURN_RADIUS_TIGHT` | Measured in-plane turn radius (incl. sharp corners) below `ldm_min_turn_radius_mm`, with the worst Z |
 | `LDM_SECTION_CHANGE_ABRUPT` | Relative wall cross-section change between adjacent body layers exceeds `ldm_max_section_change_ratio` (drying-shrinkage/cracking risk), with the peak ratio and its Z |

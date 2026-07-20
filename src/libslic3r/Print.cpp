@@ -2070,8 +2070,8 @@ void Print::update_clay_body_continuity_analysis() const
                     continue;
                 const bool over = m.ratio >= 1.0;
                 analysis.warnings.push_back({m.code, over ? "high" : "medium", "stability",
-                    over ? L("LDM stability screening predicts collapse under self-weight (conservative, no drying credit).")
-                         : L("LDM stability screening is close to the self-weight limit (conservative, no drying credit)."),
+                    over ? L("LDM stability screening (uncalibrated prototype) predicts collapse under self-weight (conservative, no drying credit).")
+                         : L("LDM stability screening (uncalibrated prototype) is close to the self-weight limit (conservative, no drying credit)."),
                     Slic3r::format("mode=%s, utilization=%.2f, at_z=%.1f", m.mode, m.ratio, stab.failing_z_mm),
                     stab.failing_z_mm});
                 if (over)
