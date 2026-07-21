@@ -59,4 +59,6 @@ add_subdirectory(fff_print)
 add_subdirectory(sla_print)
 add_subdirectory(filament_group)
 
-
+if(ENABLE_MCP_SERVER)
+    add_subdirectory(mcp_server)
+endif()
