@@ -18,6 +18,8 @@ void split_authority(std::string s, std::string& host, std::string& port) {
     if (scheme != std::string::npos) s = s.substr(scheme + 3);
     auto slash = s.find('/');
     if (slash != std::string::npos) s = s.substr(0, slash);
+    auto at = s.rfind('@');                          // drop any userinfo (user:pass@)
+    if (at != std::string::npos) s = s.substr(at + 1);
     if (!s.empty() && s.front() == '[') {            // IPv6 literal: [::1]:port
         auto rb = s.find(']');
         if (rb == std::string::npos) { host = s; }
@@ -35,6 +37,17 @@ void split_authority(std::string s, std::string& host, std::string& port) {
 
 bool host_is_loopback(const std::string& host) {
     return host == "127.0.0.1" || host == "localhost" || host == "::1";
+}
+
+// Constant-time string compare so token validation doesn't leak the secret via
+// response timing. Length is not secret (fixed-size token), so an early length
+// check is fine.
+bool constant_time_eq(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    unsigned char r = 0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        r |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
+    return r == 0;
 }
 } // namespace
 
@@ -131,7 +144,10 @@ void McpApiServer::Session::start() {
 
 bool McpApiServer::Session::host_is_local() const {
     auto it = m_headers.find("host");
-    if (it == m_headers.end()) return true;   // HTTP/1.0 or no Host: not a browser
+    // HTTP/1.1 requires Host, and legitimate local MCP clients always send it.
+    // Fail closed on an absent Host so this stays a real second layer rather
+    // than leaving the token as the only control.
+    if (it == m_headers.end()) return false;
     std::string host, port;
     split_authority(it->second, host, port);
     if (!host_is_loopback(host)) return false;
@@ -160,9 +176,9 @@ bool McpApiServer::Session::is_authorized() const {
         std::string scheme = (sp == std::string::npos) ? auth : auth.substr(0, sp);
         std::string cred   = (sp == std::string::npos) ? std::string() : auth.substr(sp + 1);
         std::transform(scheme.begin(), scheme.end(), scheme.begin(), ::tolower);
-        if (scheme == "bearer" && cred == m_auth_token) return true;
+        if (scheme == "bearer" && constant_time_eq(cred, m_auth_token)) return true;
     }
-    return get("x-mcp-token") == m_auth_token && !m_auth_token.empty();
+    return constant_time_eq(get("x-mcp-token"), m_auth_token);
 }
 
 std::string McpApiServer::Session::cors_origin() const {
