@@ -1859,9 +1859,17 @@ void PreferencesDialog::create_items()
 
     // Copy MCP Config button
     auto item_copy_config = create_item_button(_L("MCP Configuration"), _L("Copy MCP Config"), _L("Copy MCP server configuration JSON to clipboard"), "", [this, get_mcp_port]() {
+        // Include the auth token so the client can authenticate. The token is
+        // generated on first server start; prompt the user if it isn't set yet.
+        std::string token = app_config->get("mcp_server_token");
+        if (token.empty()) {
+            MessageDialog dlg(this, _L("Start the MCP server once first, then copy the configuration."), _L("MCP Server"), wxOK | wxICON_INFORMATION);
+            dlg.ShowModal();
+            return;
+        }
         wxString json = wxString::Format(
-            "{\"mcpServers\":{\"orca-slicer\":{\"type\":\"http\",\"url\":\"http://localhost:%d/mcp\"}}}",
-            get_mcp_port());
+            "{\"mcpServers\":{\"orca-slicer\":{\"type\":\"http\",\"url\":\"http://localhost:%d/mcp\",\"headers\":{\"Authorization\":\"Bearer %s\"}}}}",
+            get_mcp_port(), wxString::FromUTF8(token));
         if (wxTheClipboard->Open()) {
             wxTheClipboard->SetData(new wxTextDataObject(json));
             wxTheClipboard->Close();

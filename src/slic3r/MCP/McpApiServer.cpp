@@ -8,6 +8,49 @@ using boost::asio::ip::tcp;
 
 namespace Slic3r { namespace GUI {
 
+namespace {
+// Split an authority "host[:port]" or an origin "scheme://host[:port]" into a
+// lowercased host and its (optional) port string.
+void split_authority(std::string s, std::string& host, std::string& port) {
+    host.clear();
+    port.clear();
+    auto scheme = s.find("://");
+    if (scheme != std::string::npos) s = s.substr(scheme + 3);
+    auto slash = s.find('/');
+    if (slash != std::string::npos) s = s.substr(0, slash);
+    auto at = s.rfind('@');                          // drop any userinfo (user:pass@)
+    if (at != std::string::npos) s = s.substr(at + 1);
+    if (!s.empty() && s.front() == '[') {            // IPv6 literal: [::1]:port
+        auto rb = s.find(']');
+        if (rb == std::string::npos) { host = s; }
+        else {
+            host = s.substr(1, rb - 1);
+            if (rb + 1 < s.size() && s[rb + 1] == ':') port = s.substr(rb + 2);
+        }
+    } else {
+        auto colon = s.rfind(':');
+        if (colon != std::string::npos) { host = s.substr(0, colon); port = s.substr(colon + 1); }
+        else host = s;
+    }
+    std::transform(host.begin(), host.end(), host.begin(), ::tolower);
+}
+
+bool host_is_loopback(const std::string& host) {
+    return host == "127.0.0.1" || host == "localhost" || host == "::1";
+}
+
+// Constant-time string compare so token validation doesn't leak the secret via
+// response timing. Length is not secret (fixed-size token), so an early length
+// check is fine.
+bool constant_time_eq(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    unsigned char r = 0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        r |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
+    return r == 0;
+}
+} // namespace
+
 // ---------------------------------------------------------------------------
 // McpApiServer
 // ---------------------------------------------------------------------------
@@ -24,7 +67,7 @@ void McpApiServer::start() {
     if (m_running) return;
     if (!m_handler) return;
 
-    m_listener = std::make_unique<Listener>(m_ioc, m_port, m_handler);
+    m_listener = std::make_unique<Listener>(m_ioc, m_port, m_handler, m_auth_token);
     m_listener->start_accept();
     m_running = true;
     m_thread = boost::thread([this]() { run_io(); });
@@ -53,10 +96,13 @@ void McpApiServer::run_io() {
 // Listener
 // ---------------------------------------------------------------------------
 
-McpApiServer::Listener::Listener(boost::asio::io_context& ioc, int port, request_handler_fn& handler)
+McpApiServer::Listener::Listener(boost::asio::io_context& ioc, int port, request_handler_fn& handler,
+                                 std::string auth_token)
     : m_ioc(ioc)
     , m_acceptor(ioc, tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port))
     , m_handler(handler)
+    , m_port(port)
+    , m_auth_token(std::move(auth_token))
 {
     m_acceptor.set_option(boost::asio::socket_base::reuse_address(true));
 }
@@ -65,7 +111,7 @@ void McpApiServer::Listener::start_accept() {
     m_acceptor.async_accept(
         [this](const boost::system::error_code& ec, tcp::socket socket) {
             if (!ec) {
-                auto sess = std::make_shared<Session>(std::move(socket), m_handler);
+                auto sess = std::make_shared<Session>(std::move(socket), m_handler, m_port, m_auth_token);
                 sess->start();
             }
             if (m_acceptor.is_open()) {
@@ -83,11 +129,62 @@ void McpApiServer::Listener::stop() {
 // Session
 // ---------------------------------------------------------------------------
 
-McpApiServer::Session::Session(tcp::socket socket, request_handler_fn& handler)
-    : m_socket(std::move(socket)), m_handler(handler) {}
+McpApiServer::Session::Session(tcp::socket socket, request_handler_fn& handler,
+                               int port, std::string auth_token)
+    : m_socket(std::move(socket))
+    , m_handler(handler)
+    , m_port(port)
+    , m_auth_token(std::move(auth_token)) {}
 
 void McpApiServer::Session::start() {
     read_request_line();
+}
+
+// --- Security helpers --------------------------------------------------------
+
+bool McpApiServer::Session::host_is_local() const {
+    auto it = m_headers.find("host");
+    // HTTP/1.1 requires Host, and legitimate local MCP clients always send it.
+    // Fail closed on an absent Host so this stays a real second layer rather
+    // than leaving the token as the only control.
+    if (it == m_headers.end()) return false;
+    std::string host, port;
+    split_authority(it->second, host, port);
+    if (!host_is_loopback(host)) return false;
+    if (!port.empty() && port != std::to_string(m_port)) return false;
+    return true;
+}
+
+bool McpApiServer::Session::origin_is_local() const {
+    auto it = m_headers.find("origin");
+    if (it == m_headers.end()) return true;   // non-browser clients send no Origin
+    if (it->second == "null") return false;   // opaque origin (sandboxed/file)
+    std::string host, port;
+    split_authority(it->second, host, port);
+    return host_is_loopback(host);
+}
+
+bool McpApiServer::Session::is_authorized() const {
+    if (m_auth_token.empty()) return true;    // no token configured (discouraged)
+    auto get = [&](const char* k) -> std::string {
+        auto it = m_headers.find(k);
+        return it == m_headers.end() ? std::string() : it->second;
+    };
+    std::string auth = get("authorization");
+    if (!auth.empty()) {
+        auto sp = auth.find(' ');
+        std::string scheme = (sp == std::string::npos) ? auth : auth.substr(0, sp);
+        std::string cred   = (sp == std::string::npos) ? std::string() : auth.substr(sp + 1);
+        std::transform(scheme.begin(), scheme.end(), scheme.begin(), ::tolower);
+        if (scheme == "bearer" && constant_time_eq(cred, m_auth_token)) return true;
+    }
+    return constant_time_eq(get("x-mcp-token"), m_auth_token);
+}
+
+std::string McpApiServer::Session::cors_origin() const {
+    auto it = m_headers.find("origin");
+    if (it == m_headers.end()) return "";
+    return origin_is_local() ? it->second : std::string();
 }
 
 void McpApiServer::Session::read_request_line() {
@@ -185,12 +282,37 @@ void McpApiServer::Session::process_request(const std::string& body) {
     BOOST_LOG_TRIVIAL(debug) << "MCP API: " << m_method << " " << m_url
                              << " body=" << body.size() << " bytes";
 
-    // Handle OPTIONS preflight
+    // Reject cross-origin and DNS-rebinding attempts before doing any work: a
+    // web page must not be able to reach this localhost server. Non-browser
+    // clients (no Origin/Host) are unaffected.
+    if (!host_is_local() || !origin_is_local()) {
+        Response resp;
+        resp.status_code = 403;
+        resp.status_text = "Forbidden";
+        resp.content_type = "application/json";
+        resp.body = "{\"ok\":false,\"error\":\"forbidden: non-local Host/Origin\"}";
+        send_response(resp);
+        return;
+    }
+
+    // CORS preflight -- answered only after the origin check above passes.
     if (m_method == "OPTIONS") {
         Response resp;
         resp.status_code = 204;
         resp.status_text = "No Content";
         resp.body = "";
+        send_response(resp);
+        return;
+    }
+
+    // Every real request must carry the shared token.
+    if (!is_authorized()) {
+        Response resp;
+        resp.status_code = 401;
+        resp.status_text = "Unauthorized";
+        resp.content_type = "application/json";
+        resp.extra_headers["WWW-Authenticate"] = "Bearer";
+        resp.body = "{\"ok\":false,\"error\":\"unauthorized: missing or invalid MCP token\"}";
         send_response(resp);
         return;
     }
@@ -213,9 +335,15 @@ void McpApiServer::Session::send_response(const Response& resp) {
 
     std::ostringstream ss;
     ss << "HTTP/1.1 " << resp.status_code << " " << resp.status_text << "\r\n";
-    ss << "Access-Control-Allow-Origin: *\r\n";
+    // Echo the caller's Origin only when it is a validated localhost origin --
+    // never a wildcard, so a random web page gets no CORS grant.
+    std::string origin = cors_origin();
+    if (!origin.empty()) {
+        ss << "Access-Control-Allow-Origin: " << origin << "\r\n";
+        ss << "Vary: Origin\r\n";
+    }
     ss << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-    ss << "Access-Control-Allow-Headers: Content-Type, Accept, Mcp-Session-Id\r\n";
+    ss << "Access-Control-Allow-Headers: Content-Type, Accept, Authorization, X-Mcp-Token, Mcp-Session-Id\r\n";
     ss << "Access-Control-Expose-Headers: Mcp-Session-Id\r\n";
     ss << "Connection: close\r\n";
 
