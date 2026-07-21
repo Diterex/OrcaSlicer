@@ -5,6 +5,9 @@
 #ifdef ENABLE_MCP_SERVER
 #include "MCP/CommandDispatch.h"
 #include "MCP/McpApiServer.h"
+#include <random>
+#include <sstream>
+#include <iomanip>
 #endif
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -7274,6 +7277,22 @@ void GUI_App::start_mcp_server()
         try { port = std::stoi(port_str); } catch (...) {}
     }
     m_mcp_server.set_port(port);
+
+    // Require a shared secret so only local clients that know the token (which
+    // we hand out via the "Copy MCP Config" button) can drive the app. Generate
+    // once per install and persist it.
+    std::string token = app_config->get("mcp_server_token");
+    if (token.empty()) {
+        std::random_device rd;
+        std::uniform_int_distribution<uint64_t> dist;
+        std::ostringstream oss;
+        oss << std::hex << std::setfill('0')
+            << std::setw(16) << dist(rd) << std::setw(16) << dist(rd);
+        token = oss.str();
+        app_config->set("mcp_server_token", token);
+        app_config->save();
+    }
+    m_mcp_server.set_auth_token(token);
 
     CommandDispatch::instance().init();
     m_mcp_server.set_handler([](const std::string& method, const std::string& url, const std::string& body,

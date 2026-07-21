@@ -11,7 +11,9 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include <miniz.h>
-#include <GL/glew.h>
+// This fork loads OpenGL via glad (not GLEW); use the same loader so GL calls
+// resolve at link time.
+#include <glad/gl.h>
 
 #include <future>
 #include <set>
@@ -31,6 +33,18 @@ static McpApiServer::Response json_response(const std::string& body, int status 
     resp.content_type = "application/json";
     resp.body = body;
     return resp;
+}
+
+// Helper: join non-empty warnings from Print::validate (this fork returns them
+// as a vector) into a single "; "-separated string.
+static std::string join_warnings(const std::vector<StringObjectException>& warnings) {
+    std::string out;
+    for (const auto& w : warnings) {
+        if (w.string.empty()) continue;
+        if (!out.empty()) out += "; ";
+        out += w.string;
+    }
+    return out;
 }
 
 CommandDispatch& CommandDispatch::instance() {
@@ -580,14 +594,16 @@ void CommandDispatch::register_diagnostics_commands() {
         return call_on_gui_thread([&]() -> json {
             auto* plater = wxGetApp().plater();
             const auto& print = plater->fff_print();
-            StringObjectException warning;
-            auto err = print.validate(&warning);
+            // This fork's Print::validate takes a vector of warnings.
+            std::vector<StringObjectException> warnings;
+            auto err = print.validate(&warnings);
             json result;
             result["valid"] = err.string.empty();
             if (!err.string.empty())
                 result["error"] = err.string;
-            if (!warning.string.empty())
-                result["warning"] = warning.string;
+            std::string warning_text = join_warnings(warnings);
+            if (!warning_text.empty())
+                result["warning"] = warning_text;
             return result;
         });
     });
@@ -622,12 +638,13 @@ void CommandDispatch::register_diagnostics_commands() {
             }
 
             // Check for validation errors
-            StringObjectException warning;
-            auto err = print.validate(&warning);
+            std::vector<StringObjectException> warnings;
+            auto err = print.validate(&warnings);
             if (!err.string.empty())
                 result["error"] = err.string;
-            if (!warning.string.empty())
-                result["warning"] = warning.string;
+            std::string warning_text = join_warnings(warnings);
+            if (!warning_text.empty())
+                result["warning"] = warning_text;
 
             return result;
         });
