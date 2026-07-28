@@ -18,6 +18,7 @@
 #include <wx/numformatter.h>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -1315,6 +1316,10 @@ void ExtruderOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const
 
 wxString OptionsGroup::get_url(const std::string& path_end)
 {
+    // Clay fork: allow absolute URLs so fork-specific settings can link to
+    // fork-hosted documentation instead of the upstream wiki.
+    if (boost::istarts_with(path_end, "http://") || boost::istarts_with(path_end, "https://"))
+        return from_u8(path_end);
     // BBS
     wxString str = from_u8(path_end);
     auto pos     = str.find(L'#');

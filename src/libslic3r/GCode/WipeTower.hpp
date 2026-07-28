@@ -442,8 +442,8 @@ private:
 	bool   m_enable_timelapse_print = false;
 	bool   m_semm               = true; // Are we using a single extruder multimaterial printer?
 	bool   m_purge_in_prime_tower = false; // Do we purge in the prime tower?
-    Vec2f  m_wipe_tower_pos; 			// Left front corner of the wipe tower in mm.
-	float  m_wipe_tower_width; 			// Width of the wipe tower.
+    Vec2f  m_wipe_tower_pos {Vec2f::Zero()};	// Left front corner of the wipe tower in mm.
+	float  m_wipe_tower_width = 0.f;		// Width of the wipe tower.
 	float  m_wipe_tower_depth 	= 0.f; 	// Depth of the wipe tower
 	// BBS
 	float  m_wipe_tower_height = 0.f;
@@ -461,7 +461,9 @@ private:
     size_t m_first_layer_idx    = size_t(-1);
 
     std::vector<double> m_filaments_change_length;
-    size_t       m_cur_layer_id;
+    size_t       m_cur_layer_id = 0; // uninitialized here previously; used as a
+                                     // layer index (block.layer_depths[...]) - a
+                                     // garbage value is an out-of-bounds read.
     NozzleChangeResult m_nozzle_change_result;
     std::vector<int>   m_filament_map;
     std::vector<int>   m_filament_nozzle_map;  // Vortek H2C: filament_id → physical nozzle_id
@@ -508,9 +510,9 @@ private:
         RectangularBed,
         CircularBed,
         CustomBed
-    } m_bed_shape;
-    float m_bed_width; // width of the bed bounding box
-    Vec2f m_bed_bottom_left; // bottom-left corner coordinates (for rectangular beds)
+    } m_bed_shape = RectangularBed;
+    float m_bed_width = 0.f; // width of the bed bounding box
+    Vec2f m_bed_bottom_left {Vec2f::Zero()}; // bottom-left corner coordinates (for rectangular beds)
 
 	float m_perimeter_width = 0.4f * Width_To_Nozzle_Ratio; // Width of an extrusion line, also a perimeter spacing for 100% infill.
     float m_nozzle_change_perimeter_width = 0.4f * Width_To_Nozzle_Ratio;

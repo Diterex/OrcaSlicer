@@ -629,6 +629,14 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     const bool gcf_is_marlin_firmware = gcflavor == GCodeFlavor::gcfMarlinFirmware;
     const bool gcf_is_klipper = gcflavor == GCodeFlavor::gcfKlipper;
 
+    // Clay fork: LDM analysis parameters only apply on an LDM machine.
+    const bool is_ldm_printer = preset_bundle->printers.get_edited_preset().config.opt_bool("ldm_modded_printer");
+    for (auto el : {"ldm_nominal_bead_width_mm", "ldm_nominal_layer_height_mm", "ldm_max_unsupported_step_mm",
+                    "ldm_min_turn_radius_mm", "ldm_reservoir_current_ml",
+                    "ldm_flow_multiplier_measured", "ldm_flow_ceiling_mm_s",
+                    "ldm_continuous_path_required", "ldm_disable_retracts", "ldm_disable_z_hop"})
+        toggle_field(el, is_ldm_printer);
+
     bool have_volumetric_extrusion_rate_slope = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope")->value > 0;
     float have_volumetric_extrusion_rate_slope_segment_length = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope_segment_length")->value;
     toggle_field("enable_arc_fitting", !have_volumetric_extrusion_rate_slope);

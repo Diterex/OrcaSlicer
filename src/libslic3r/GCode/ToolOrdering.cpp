@@ -1203,8 +1203,16 @@ static std::vector<FlushMatrix> prepare_flush_matrices(const PrintConfig& print_
     for (size_t nozzle_id = 0; nozzle_id < extruder_nums; ++nozzle_id) {
         std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config.flush_volumes_matrix.values, nozzle_id, extruder_nums)));
         std::vector<std::vector<float>> wipe_volumes;
-        for (unsigned int i = 0; i < filament_nums; ++i)
-            wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * filament_nums, flush_matrix.begin() + (i + 1) * filament_nums));
+        // Guard against an undersized flush_volumes_matrix (see the same pattern
+        // in reorder_extruders_for_minimum_flush_volume): the row slicing assumes
+        // filament_nums^2 entries per nozzle; fewer would read past the end.
+        const bool have_full_matrix = flush_matrix.size() >= size_t(filament_nums) * filament_nums;
+        for (unsigned int i = 0; i < filament_nums; ++i) {
+            if (have_full_matrix)
+                wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * filament_nums, flush_matrix.begin() + (i + 1) * filament_nums));
+            else
+                wipe_volumes.push_back(std::vector<float>(filament_nums, 0.f));
+        }
         nozzle_flush_mtx.emplace_back(wipe_volumes);
     }
 
@@ -1304,6 +1312,12 @@ static FilamentGroupContext build_filament_group_context(
     std::vector<std::string>   filament_colours    = print_config.filament_colour.values;
     std::vector<unsigned char> filament_is_support = print_config.filament_is_support.values;
     std::vector<std::string>   filament_ids        = print_config.filament_ids.values;
+    // These per-filament arrays are indexed in parallel below (idx over
+    // filament_types). A partial/misconfigured config can leave some shorter
+    // than filament_type, causing an out-of-bounds read; co-size them.
+    filament_colours.resize(filament_types.size());
+    filament_is_support.resize(filament_types.size(), 0);
+    filament_ids.resize(filament_types.size());
 
     FGMode fg_mode = mode == FilamentMapMode::fmmAutoForMatch ? FGMode::MatchMode : FGMode::FlushMode;
     context.model_info.flush_matrix          = std::move(nozzle_flush_mtx);
@@ -1965,7 +1979,14 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
     for (size_t nozzle_id = 0; nozzle_id < nozzle_nums; ++nozzle_id) {
         std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config->flush_volumes_matrix.values, nozzle_id, nozzle_nums)));
         std::vector<std::vector<float>> wipe_volumes;
-        if ((print_config->purge_in_prime_tower && print_config->single_extruder_multi_material) || wipe_tower_type == WipeTowerType::Type1) {
+        // The per-nozzle flush matrix must hold a full number_of_extruders x
+        // number_of_extruders block. get_flush_volumes_matrix() slices
+        // flush_volumes_matrix by nozzle_nums, so an undersized/misconfigured
+        // matrix (fewer than nozzle_nums * number_of_extruders^2 entries) yields
+        // too few values here and the row slicing below would read past the end
+        // (heap-buffer-overflow). Guard it and fall back to prime_volume.
+        const bool have_full_matrix = flush_matrix.size() >= size_t(number_of_extruders) * number_of_extruders;
+        if (have_full_matrix && ((print_config->purge_in_prime_tower && print_config->single_extruder_multi_material) || wipe_tower_type == WipeTowerType::Type1)) {
             for (unsigned int i = 0; i < number_of_extruders; ++i)
                 wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
         } else {

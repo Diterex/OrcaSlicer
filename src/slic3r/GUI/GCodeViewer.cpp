@@ -1167,6 +1167,28 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
     // release gpu memory, if used
     reset();
 
+    // Clay fork: cache the LDM Vase Plus analysis for the legend (B3 overlay).
+    {
+        const ClayVasePlusAnalysisResult &a = print.clay_vase_plus_analysis();
+        m_ldm_analysis = LdmAnalysisSummary{};
+        m_ldm_analysis.active = a.clay_mode_active;
+        if (a.clay_mode_active) {
+            m_ldm_analysis.overall_risk_level = a.overall_risk_level;
+            m_ldm_analysis.risk_distribution_mode = a.risk_distribution_mode;
+            m_ldm_analysis.support_margin_status = a.support_margin_summary.status;
+            m_ldm_analysis.support_first_warning_z_mm = a.support_margin_summary.first_warning_z_mm;
+            m_ldm_analysis.support_worst_margin_mm = a.support_margin_summary.worst_margin_mm;
+            m_ldm_analysis.frag_detected = a.body_fragmentation_zone.detected;
+            m_ldm_analysis.frag_z_start_mm = a.body_fragmentation_zone.z_start_mm;
+            m_ldm_analysis.frag_z_end_mm = a.body_fragmentation_zone.z_end_mm;
+            m_ldm_analysis.stability_evaluated = a.stability.evaluated;
+            m_ldm_analysis.stability_mode = a.stability.predicted_mode;
+            m_ldm_analysis.stability_failing_z_mm = a.stability.failing_z_mm;
+            for (const ClayVasePlusWarning &w : a.warnings)
+                m_ldm_analysis.warnings.push_back({ w.code, w.severity, w.message, w.z_hint_mm });
+        }
+    }
+
     //BBS: add mutex for protection of gcode result
     wxGetApp().plater()->suppress_background_process(true);
     gcode_result.lock();
@@ -4692,6 +4714,57 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     ImGui::Dummy({ window_padding, window_padding });
     if (m_nozzle_nums > 1 && (m_viewer.get_view_type() == libvgcode::EViewType::Summary || m_viewer.get_view_type() == libvgcode::EViewType::ColorPrint)) // ORCA show only on summary and filament tab
         render_legend_color_arr_recommen(window_padding);
+
+    // Clay fork: LDM Vase Plus analysis section (B3 risk overlay). Shows the
+    // per-height risk verdict for the sliced object; collapsed by default.
+    if (m_ldm_analysis.active) {
+        ImGui::Dummy({ window_padding, window_padding });
+        ImGui::SameLine();
+        const auto &a = m_ldm_analysis;
+        const ImVec4 red{ 0.90f, 0.30f, 0.25f, 1.0f };
+        const ImVec4 amber{ 0.95f, 0.70f, 0.20f, 1.0f };
+        const ImVec4 green{ 0.30f, 0.80f, 0.45f, 1.0f };
+        auto risk_color = [&](const std::string &lvl) {
+            if (lvl == "high_risk") return red;
+            if (lvl == "guarded")   return amber;
+            return green;
+        };
+        if (ImGui::CollapsingHeader(_u8L("LDM Vase Plus analysis").c_str())) {
+            ImGui::TextColored(risk_color(a.overall_risk_level),
+                "%s", (_u8L("Overall risk: ") + a.overall_risk_level).c_str());
+            ImGui::Text("%s", (_u8L("Risk mode: ") + a.risk_distribution_mode).c_str());
+            if (a.support_margin_status != "not_computed") {
+                const bool bad = a.support_margin_status == "failing";
+                ImGui::TextColored(bad ? red : (a.support_margin_status == "marginal" ? amber : green),
+                    "%s", (_u8L("Support margin: ") + a.support_margin_status).c_str());
+                if (a.support_first_warning_z_mm >= 0.0) {
+                    char margin_buf[32];
+                    snprintf(margin_buf, sizeof(margin_buf), "%.2f", a.support_worst_margin_mm);
+                    ImGui::Text("    %s", (_u8L("first at Z ") + std::to_string((int)(a.support_first_warning_z_mm + 0.5)) + " mm, "
+                        + _u8L("worst ") + margin_buf + " mm").c_str());
+                }
+            }
+            if (a.frag_detected)
+                ImGui::TextColored(amber, "%s", (_u8L("Fragmentation zone: Z ")
+                    + std::to_string((int)(a.frag_z_start_mm + 0.5)) + "-"
+                    + std::to_string((int)(a.frag_z_end_mm + 0.5)) + " mm").c_str());
+            if (a.stability_evaluated && a.stability_mode != "stable")
+                ImGui::TextColored(red, "%s", (_u8L("Stability: ") + a.stability_mode + _u8L(" at Z ")
+                    + std::to_string((int)(a.stability_failing_z_mm + 0.5)) + " mm").c_str());
+            if (!a.warnings.empty()) {
+                ImGui::Separator();
+                for (const auto &w : a.warnings) {
+                    const ImVec4 c = w.severity == "high" ? red : (w.severity == "medium" ? amber : green);
+                    std::string line = w.code;
+                    if (w.z_hint_mm >= 0.0)
+                        line += " (Z " + std::to_string((int)(w.z_hint_mm + 0.5)) + ")";
+                    ImGui::TextColored(c, "%s", line.c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", w.message.c_str());
+                }
+            }
+        }
+    }
 
     legend_height = ImGui::GetCurrentWindow()->Size.y;
     imgui.end();
