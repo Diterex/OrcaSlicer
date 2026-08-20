@@ -572,8 +572,21 @@ static DynamicPrintConfig dual_extruder_toolchange_config()
     config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210}));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190}));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats({0, 140, 140, 0}));
+    // One flush multiplier per nozzle (heads_count). The flush-matrix size
+    // check in GCode.cpp uses filament_count^2 * flush_multiplier.size(), while
+    // the multi-nozzle prime-tower path slices the matrix by nozzle_diameter
+    // count - so flush_multiplier must have one entry per nozzle to keep both
+    // consistent for this 2-nozzle machine.
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1, 1}));
+    // 2 nozzles x a 2x2 filament flush block each = filament_count^2 * heads = 8.
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats({0, 140, 140, 0, 0, 140, 140, 0}));
+    // Per-filament arrays the multi-nozzle prime-tower path indexes in parallel
+    // with filament_colour/type. full_print_config() defaults these to a single
+    // filament; size them to the 2 filaments this config declares.
+    config.set_key_value("filament_is_support",            new ConfigOptionBools({false, false}));
+    config.set_key_value("filament_ids",                   new ConfigOptionStrings({"PLA_1", "PLA_2"}));
+    config.set_key_value("filament_printable",             new ConfigOptionInts({3, 3}));
+    config.set_key_value("filament_adhesiveness_category", new ConfigOptionInts({0, 0}));
     return config;
 }
 

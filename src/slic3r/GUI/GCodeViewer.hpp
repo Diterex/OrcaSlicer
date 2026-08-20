@@ -185,6 +185,28 @@ private:
     unsigned int m_last_result_id{ 0 };
     //BBS: save m_gcode_result as well
     const GCodeProcessorResult* m_gcode_result;
+
+    // Clay fork: cached LDM Vase Plus analysis summary for the preview legend
+    // (B3 risk overlay). Populated from the Print at load; a compact POD so the
+    // header stays decoupled from Print.hpp.
+    struct LdmAnalysisSummary
+    {
+        struct Warn { std::string code; std::string severity; std::string message; double z_hint_mm { -1.0 }; };
+        bool        active { false };
+        std::string overall_risk_level;
+        std::string risk_distribution_mode;
+        std::string support_margin_status;
+        double      support_first_warning_z_mm { -1.0 };
+        double      support_worst_margin_mm { 0.0 };
+        bool        frag_detected { false };
+        double      frag_z_start_mm { -1.0 };
+        double      frag_z_end_mm { -1.0 };
+        bool        stability_evaluated { false };
+        std::string stability_mode;
+        double      stability_failing_z_mm { -1.0 };
+        std::vector<Warn> warnings;
+    };
+    LdmAnalysisSummary m_ldm_analysis;
     std::array<unsigned int, static_cast<size_t>(EMoveType::Count)> m_move_type_counts{};
     std::array<std::array<float, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)>, static_cast<size_t>(EMoveType::Count)> m_move_type_times{};
     std::array<float, static_cast<size_t>(EMoveType::Count)> m_move_type_distances{};

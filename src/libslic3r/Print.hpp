@@ -765,15 +765,20 @@ struct WipeTowerData
     std::vector<std::vector<WipeTower::ToolChangeResult>> tool_changes;
     std::unique_ptr<WipeTower::ToolChangeResult>          final_purge;
     std::vector<float>                                    used_filament;
-    int                                                   number_of_toolchanges;
+    // These scalar members previously had no initializer and relied on clear()
+    // running first; a code path that reads them before the wipe tower is
+    // generated (e.g. first_layer_wipe_tower_corners feeding the skirt) then
+    // reads uninitialized memory - a layout/architecture-dependent crash. Give
+    // them explicit defaults so they are never garbage.
+    int                                                   number_of_toolchanges = -1;
 
     // Depth of the wipe tower to pass to GLCanvas3D for exact bounding box:
-    float                                                 depth;
+    float                                                 depth = 0.f;
     std::vector<std::pair<float, float>>                  z_and_depth_pairs;
-    float                                                 brim_width;
-    float                                                 height;
+    float                                                 brim_width = 0.f;
+    float                                                 height = 0.f;
     BoundingBoxf                                          bbx;//including brim
-    Vec2f                                                 rib_offset;
+    Vec2f                                                 rib_offset { Vec2f::Zero() };
     std::optional<WipeTowerMeshData>                      wipe_tower_mesh_data;//added rib_offset
     void clear() {
         priming.reset(nullptr);
@@ -783,7 +788,11 @@ struct WipeTowerData
         number_of_toolchanges = -1;
         depth = 0.f;
         brim_width = 0.f;
+        // The BBL wipe-tower path leaves height unset (only the WipeTower2 path
+        // sets it), so first_layer_wipe_tower_corners() read garbage into the
+        // stabilization-cone radius -> out-of-range skirt coords. Reset both.
         height = 0.f;
+        bbx = BoundingBoxf();
         rib_offset = Vec2f::Zero();
         wipe_tower_mesh_data  = std::nullopt;
     }
@@ -879,6 +888,129 @@ struct StatisticsByExtruderCount
     }
 };
 
+struct ClayVasePlusWarning
+{
+    std::string code;
+    std::string severity;
+    std::string category;
+    std::string message;
+    std::string metric;
+    double      z_hint_mm { -1.0 };
+};
+
+struct ClayVasePlusBodyFragmentationZone
+{
+    bool   detected { false };
+    double z_start_mm { -1.0 };
+    double z_end_mm { -1.0 };
+    int    peak_outer_wall_sections { 0 };
+    int    peak_overhang_wall_sections { 0 };
+};
+
+struct ClayVasePlusBaseRescueComplexity
+{
+    std::string level { "none" };
+    double      highest_risk_z_mm { -1.0 };
+    bool        has_gap_infill { false };
+    bool        has_restart_heavy_transition { false };
+};
+
+struct ClayVasePlusSupportMarginSummary
+{
+    std::string status { "not_computed" };
+    double      first_warning_z_mm { -1.0 };
+    double      worst_margin_mm { 0.0 };
+};
+
+// B2: per-loop support-advance field (docs/b2-support-margin-contract.md §3).
+// arc_pos is normalized [0,1) along the loop; advance[i] is the exact
+// horizontal point-to-segment distance from sample i to the wall loop below.
+// Consumed by Track C (C1 step-relief, C2 field optimizer) as constraint input.
+struct ClaySupportMarginLoop
+{
+    int                 layer_idx { -1 };
+    double              z_mm { 0.0 };
+    double              a_max_mm { 0.0 };
+    double              dz_budget_mm { 0.0 };
+    std::vector<double> arc_pos;
+    std::vector<double> advance_mm;
+
+    double worst_advance_mm() const {
+        double worst = 0.0;
+        for (double a : advance_mm) worst = std::max(worst, a);
+        return worst;
+    }
+    double violating_fraction() const {
+        if (advance_mm.empty()) return 0.0;
+        size_t n = 0;
+        for (double a : advance_mm) if (a > a_max_mm) ++ n;
+        return double(n) / double(advance_mm.size());
+    }
+};
+
+struct ClayVasePlusStartupCompatibility
+{
+    std::string status { "compatible" };
+    bool        purge_like_start_detected { false };
+    bool        startup_retract_risk { false };
+};
+
+struct ClayVasePlusMetricSnapshot
+{
+    int    retract_count { 0 };
+    double max_retraction_length_mm { 0.0 };
+    double max_z_hop_mm { 0.0 };
+    double nominal_bead_width_mm { 0.0 };
+    double nominal_layer_height_mm { 0.0 };
+};
+
+// B4 Tier-1: conservative self-weight stability screening (no strength-gain
+// time credit; Suiker/Wolfs-style). Evaluated only when the LDM material
+// properties (density, wet yield strength; E modulus for buckling) and the
+// nominal bead width are declared.
+struct ClayStabilityScreen
+{
+    bool        evaluated { false };
+    double      squash_ratio { 0.0 };      // wet-yield utilization, worst level
+    double      buckle_ratio { 0.0 };      // shell-buckling utilization, worst level
+    double      cantilever_ratio { 0.0 };  // overturning-moment utilization, worst level
+    std::string predicted_mode { "stable" }; // stable | squash | buckle | cantilever
+    double      failing_z_mm { -1.0 };
+};
+
+// Rule 10 (shrinkage_requires_even_sections): abrupt cross-section change
+// across height drives drying shrinkage/cracking. Distinct from B2's outward-
+// step magnitude - this is the *rate of change* of the wall's enclosed section
+// between adjacent body layers. peak_ratio is the worst |dA/A| step observed.
+struct ClayVasePlusSectionChange
+{
+    bool   detected { false };
+    double peak_ratio { 0.0 };
+    double z_mm { -1.0 };
+};
+
+struct ClayVasePlusAnalysisResult
+{
+    int                                  analysis_version { 2 };
+    bool                                 clay_mode_active { false };
+    std::string                          overall_risk_level { "not_applicable" };
+    std::string                          risk_distribution_mode { "clean_control" };
+    ClayVasePlusBodyFragmentationZone    body_fragmentation_zone;
+    ClayVasePlusBaseRescueComplexity     base_rescue_complexity;
+    ClayVasePlusSupportMarginSummary     support_margin_summary;
+    ClayVasePlusStartupCompatibility     startup_compatibility;
+    ClayVasePlusMetricSnapshot           metric_snapshot;
+    std::vector<ClayVasePlusWarning>     warnings;
+    // B2 queryable field; empty unless clay mode is active and walls exist.
+    std::vector<ClaySupportMarginLoop>   support_margin_field;
+    ClayStabilityScreen                  stability;
+    // Rule 10: abrupt section-change / drying-shrinkage screen.
+    ClayVasePlusSectionChange            section_change;
+    // Rule 4: curved/overhanging geometry whose success depends on clay
+    // plasticity, flagged when no calibrated material properties exist.
+    bool                                 material_sensitive_geometry { false };
+};
+
 enum FilamentTempType {
     HighTemp=0,
     LowTemp,
@@ -959,6 +1091,7 @@ public:
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
     double              max_allowed_layer_height() const;
     bool                has_support_material() const;
+    const ClayVasePlusAnalysisResult& clay_vase_plus_analysis() const { return m_clay_vase_plus_analysis; }
     // Make sure the background processing has no access to this model_object during this call!
     void                auto_assign_extruders(ModelObject* model_object) const;
 
@@ -1256,6 +1389,10 @@ protected:
 private:
     //BBS
     static StringObjectException check_multi_filament_valid(const Print &print);
+    void                update_clay_vase_plus_analysis(std::vector<StringObjectException> *warnings) const;
+    // Clay Vase Plus Track B1: body continuity extraction from generated
+    // perimeters. Read-only over sliced layers; called at the end of process().
+    void                update_clay_body_continuity_analysis() const;
 
     bool                has_tpu_filament() const;
     bool                invalidate_state_by_config_options(const ConfigOptionResolver &new_config, const std::vector<t_config_option_key> &opt_keys);
@@ -1358,6 +1495,7 @@ private:
     Calib_Params m_calib_params;
 
     bool m_need_check_multi_filaments_compatibility{true};
+    mutable ClayVasePlusAnalysisResult m_clay_vase_plus_analysis;
 
     // To allow GCode to set the Print's GCodeExport step status.
     friend class GCode;

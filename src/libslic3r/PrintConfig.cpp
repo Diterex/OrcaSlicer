@@ -338,6 +338,19 @@ static t_config_enum_values s_keys_map_PrintOrder{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrintOrder)
 
+
+static t_config_enum_values s_keys_map_ClayStartGCodeMode{
+    { "stock",       int(ClayStartGCodeMode::Stock) },
+    { "clay_native", int(ClayStartGCodeMode::ClayNative) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ClayStartGCodeMode)
+
+static t_config_enum_values s_keys_map_LDMFeedType{
+    { "pneumatic_ram",  int(LDMFeedType::PneumaticRam) },
+    { "mechanical_ram", int(LDMFeedType::MechanicalRam) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(LDMFeedType)
+
 static t_config_enum_values s_keys_map_SlicingMode {
     { "regular",        int(SlicingMode::Regular) },
     { "even_odd",       int(SlicingMode::EvenOdd) },
@@ -3229,6 +3242,32 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
 
+    def = this->add("ldm_wet_yield_strength", coFloats);
+    def->label = L("LDM wet yield strength");
+    def->tooltip = L("[Prototype - uncalibrated] Yield strength of the wet paste as printed (printable clay bodies "
+                     "are typically 4-20 kPa). With density and bead width declared, enables the LDM self-weight "
+                     "stability screening: warns when the accumulated weight above a layer approaches what the wet "
+                     "material can carry. 0 disables the screening. NOTE: the stability screening is an experimental "
+                     "prototype whose model and defaults are order-of-magnitude values adapted from concrete-printing "
+                     "literature, NOT validated on real clay - treat its warnings as screening, not truth. Calibrate "
+                     "with a squash-cylinder print (Track D).");
+    def->sidetext = L("kPa");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("ldm_e_modulus", coFloats);
+    def->label = L("LDM wet elastic modulus");
+    def->tooltip = L("[Prototype - uncalibrated] Elastic modulus of the wet paste (printable clay bodies are "
+                     "typically 300-1000 kPa). Enables the shell-buckling part of the LDM stability screening: a "
+                     "slender wall can bow sideways well below the squash limit. 0 disables the buckling screen. "
+                     "Part of the same experimental, not-yet-clay-validated stability prototype as wet yield "
+                     "strength. Calibrate with a thin-wall tube printed to failure (Track D).");
+    def->sidetext = L("kPa");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
     def = this->add("filament_type", coStrings);
     def->label = L("Type");
     def->tooltip = L("Filament material type");
@@ -4274,6 +4313,78 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Enable this option if your printer uses pellets instead of filaments.");
     def->mode    = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
+
+    def          = this->add("ldm_modded_printer", coBool);
+    def->label   = L("LDM Modded Printer");
+    def->tooltip = L("Enable this option if this machine prints wet clay or another paste (LDM). "
+                     "Activates the LDM Vase Plus analysis for every print on this printer: "
+                     "clay-hostile setting warnings, wall continuity and support-margin analysis, "
+                     "and the LDM analysis sidecar next to exported G-code.");
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def          = this->add("ldm_feed_type", coEnum);
+    def->label   = L("LDM reservoir feed");
+    def->tooltip = L("How material reaches the auger. Pneumatic ram: air pressure feeds the auger and only the auger "
+                     "is G-code controlled. Mechanical ram: a second motor drives the ram, typically configured as a "
+                     "Marlin mixing extruder (M163/M164 in the start G-code) with the mix factor below.");
+    def->enum_keys_map = &ConfigOptionEnum<LDMFeedType>::get_enum_values();
+    def->enum_values.emplace_back("pneumatic_ram");
+    def->enum_values.emplace_back("mechanical_ram");
+    def->enum_labels.emplace_back(L("Pneumatic ram"));
+    def->enum_labels.emplace_back(L("Mechanical ram"));
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionEnum<LDMFeedType>(LDMFeedType::PneumaticRam));
+
+    def          = this->add("ldm_ram_mix_factor", coFloat);
+    def->label   = L("LDM ram mix factor");
+    def->tooltip = L("Mechanical ram only (ignored for pneumatic). The ram's share of the Marlin mixing extruder, "
+                     "e.g. 0.9 means M163 S0 P0.9 for the ram and M163 S1 P0.1 for the auger. Available in start "
+                     "G-code templates as {ldm_ram_mix_factor}. Keep within the small range your hardware tolerates.");
+    def->min     = 0;
+    def->max     = 1;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.9));
+
+    def          = this->add("ldm_reservoir_volume_ml", coFloat);
+    def->label   = L("LDM reservoir volume");
+    def->sidetext = L("ml");
+    def->tooltip = L("Usable material volume of the reservoir (tube/syringe/cartridge) feeding the auger. "
+                     "When set, the slicer compares the print's extruded volume against it and warns with the "
+                     "height at which the reservoir runs dry. 0 disables the check.");
+    def->min     = 0;
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def          = this->add("ldm_tip_cone_angle", coFloat);
+    def->label   = L("LDM tip cone angle");
+    def->sidetext = L("°");
+    def->tooltip = L("Full cone angle of the deposition tip (e.g. the PME Supatube family). Editable per tip swap. "
+                     "Feeds the upcoming tip-collision validation for non-planar printing.");
+    def->min     = 0;
+    def->max     = 180;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def          = this->add("ldm_tip_cone_length", coFloat);
+    def->label   = L("LDM tip cone length");
+    def->sidetext = L("mm");
+    def->tooltip = L("Length of the deposition tip cone from orifice to body. Editable per tip swap. "
+                     "Feeds the upcoming tip-collision validation for non-planar printing.");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def          = this->add("ldm_tip_top_diameter", coFloat);
+    def->label   = L("LDM tip top diameter");
+    def->sidetext = L("mm");
+    def->tooltip = L("Alternative to the cone angle: outer diameter at the top of the tip cone, usually easier "
+                     "to measure with calipers. When both this and the cone length are set, the effective cone "
+                     "angle is derived from (top diameter - nozzle diameter) / (2 x length) and overrides the "
+                     "angle field. The bottom orifice is the nozzle diameter.");
+    def->min     = 0;
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
 
     def = this->add("support_multi_bed_types", coBool);
     def->label = L("Support multi bed types");
@@ -6393,6 +6504,98 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("ldm_nominal_bead_width_mm", coFloat);
+    def->label = L("Clay nominal bead width");
+    def->category = L("Process");
+    def->tooltip = L("Reference bead width used by LDM Vase Plus analysis. This does not change the slicer line width by itself.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_nominal_layer_height_mm", coFloat);
+    def->label = L("Clay nominal layer height");
+    def->category = L("Process");
+    def->tooltip = L("Reference layer height used by LDM Vase Plus analysis. This does not change the sliced layer height by itself.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_max_unsupported_step_mm", coFloat);
+    def->label = L("Clay max unsupported step");
+    def->category = L("Process");
+    def->tooltip = L("Maximum outward unsupported step to target during LDM Vase Plus analysis.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_max_section_change_ratio", coFloat);
+    def->label = L("Clay max section-change ratio");
+    def->category = L("Process");
+    def->tooltip = L("Maximum relative change in wall cross-section (enclosed area) between adjacent body layers before LDM Vase Plus flags a drying-shrinkage/cracking risk. Uneven sections dry unevenly and crack. 0 disables the check.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.30));
+
+    def = this->add("ldm_reservoir_current_ml", coFloat);
+    def->label = L("Clay reservoir current fill");
+    def->category = L("Process");
+    def->tooltip = L("How much material is actually left in the current reservoir load, e.g. as reported by the printer's LDM_RESERVOIR_STATUS macro. When set, the refill warning is computed against this instead of assuming a full reservoir. 0 means assume full. This is the Track B5 stopgap until the Device tab queries the printer live.");
+    def->sidetext = L("mL");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_flow_multiplier_measured", coFloat);
+    def->label = L("Clay measured flow multiplier");
+    def->category = L("Process");
+    def->tooltip = L("The current load's measured flow output (grams per commanded E-mm) from the machine flow check (LDM_FLOW_TUNE / blob-scale). Informational: recorded in the analysis sidecar so every print is tagged with the material state it assumed. 0 means not measured.");
+    def->sidetext = L("g/E-mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_flow_ceiling_mm_s", coFloat);
+    def->label = L("Clay flow ceiling");
+    def->category = L("Process");
+    def->tooltip = L("The current load's measured flow ceiling (E-axis mm/s where the auger starts slipping) from the machine flow check. Informational: recorded in the analysis sidecar. 0 means not measured.");
+    def->sidetext = L("mm/s");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_min_turn_radius_mm", coFloat);
+    def->label = L("Clay min turn radius");
+    def->category = L("Process");
+    def->tooltip = L("Minimum in-plane turn radius LDM Vase Plus expects the wall to hold. Tighter turns (including sharp corners) than this are flagged as likely to tear or over-thin on the inside of the curve. 0 disables the check.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("ldm_continuous_path_required", coBool);
+    def->label = L("Require continuous clay path");
+    def->category = L("Process");
+    def->tooltip = L("Warn when LDM Vase Plus detects settings that are likely to break continuous deposition.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("ldm_disable_retracts", coBool);
+    def->label = L("Prefer no retracts");
+    def->category = L("Process");
+    def->tooltip = L("Warn when retract-related settings are active in LDM Vase Plus mode.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("ldm_disable_z_hop", coBool);
+    def->label = L("Prefer no Z hop");
+    def->category = L("Process");
+    def->tooltip = L("Warn when Z-hop is active in LDM Vase Plus mode.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("spiral_mode_smooth", coBool);
     def->label = L("Smooth Spiral");
     def->tooltip = L("Smooth Spiral smooths out X and Y moves as well, "
@@ -6512,6 +6715,17 @@ void PrintConfigDef::init_fff_params()
     def->height = 12;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionString("G28 ; home all axes\nG1 Z5 F5000 ; lift nozzle\n"));
+
+    def = this->add("ldm_start_gcode_mode", coEnum);
+    def->label = L("Clay start G-code mode");
+    def->tooltip = L("When LDM Vase Plus is active, choose whether to leave start G-code untouched or remove obvious filament-style purge and retract lines.");
+    def->enum_keys_map = &ConfigOptionEnum<ClayStartGCodeMode>::get_enum_values();
+    def->enum_values.emplace_back("stock");
+    def->enum_values.emplace_back("clay_native");
+    def->enum_labels.emplace_back(L("Stock"));
+    def->enum_labels.emplace_back(L("Clay native"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ClayStartGCodeMode>(ClayStartGCodeMode::Stock));
 
     def = this->add("filament_start_gcode", coStrings);
     def->label = L("Start G-code");
