@@ -652,6 +652,65 @@ SCENARIO("Change blocks carry consecutive toolchange ordinals without a duplicat
     }
 }
 
+// Regression test for the bounds guards in "Harden multi-nozzle prime-tower
+// path against under-sized configs".
+//
+// This test is primarily meaningful in an AddressSanitizer build. Before the
+// guards, the multi-nozzle prime-tower path sliced an under-sized
+// flush_volumes_matrix and indexed per-filament arrays past their end. Those
+// reads are latent on most heap layouts - the value read is garbage but in
+// mapped memory - so a plain build usually passes either way. Under ASan they
+// are hard heap-buffer-overflow failures, which is how they were found.
+//
+// What is asserted here is deliberately weak: an under-sized config may still
+// be rejected by validation, and that is fine. What must not happen is a read
+// past the end of the array while deciding to reject it.
+SCENARIO("Under-sized flush matrix and per-filament arrays do not read out of bounds", "[GCodeWriter][H2C]") {
+    GIVEN("A 2-nozzle BBL config whose flush matrix is too small for its nozzle count") {
+        DynamicPrintConfig config = dual_extruder_toolchange_config();
+
+        // One 2x2 filament block where the multi-nozzle path expects one per
+        // nozzle (filament_count^2 * heads = 8). This is the shape the
+        // pre-guard code sliced past the end of.
+        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats({0, 140, 140, 0}));
+        // Per-filament arrays left at their single-filament defaults while the
+        // config declares two filaments.
+        config.set_key_value("filament_is_support", new ConfigOptionBools({false}));
+        config.set_key_value("filament_ids",        new ConfigOptionStrings({"PLA_1"}));
+
+        Model model;
+        auto *obj1 = model.add_object();
+        obj1->add_volume(cube(20));
+        obj1->add_instance();
+        auto *obj2 = model.add_object();
+        obj2->add_volume(cube(20));
+        obj2->add_instance();
+        obj2->config.set_key_value("extruder", new ConfigOptionInt(2));
+
+        WHEN("the model is sliced") {
+            THEN("slicing does not read past the end of the under-sized arrays") {
+                Print print;
+                print.is_BBL_printer() = true;
+                arrange_objects_on_test_bed(model, config);
+                for (auto *mo : model.objects) {
+                    mo->ensure_on_bed();
+                    print.auto_assign_extruders(mo);
+                }
+                print.apply(model, config);
+                print.set_status_silent();
+                // A rejected config is an acceptable outcome; an out-of-bounds
+                // read is not. Under ASan the latter aborts this test.
+                try {
+                    print.process();
+                } catch (const std::exception &) {
+                    // Validation legitimately refusing the config is fine.
+                }
+                SUCCEED("completed without an out-of-bounds read");
+            }
+        }
+    }
+}
+
 SCENARIO("Prime-tower visits without a filament change do not advance the toolchange ordinal", "[GCodeWriter][H2C]") {
     GIVEN("A print whose only filament change happens far above the bed") {
         DynamicPrintConfig config = dual_extruder_toolchange_config();
