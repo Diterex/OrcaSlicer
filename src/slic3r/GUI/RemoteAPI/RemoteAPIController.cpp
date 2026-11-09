@@ -449,6 +449,23 @@ static bool project_file_changes_allowed()
     return wxGetApp().app_config->get_bool("remote_api_allow_file_changes");
 }
 
+// The script, G-code and connection keys (is_sensitive_config_key) whose value in
+// `next` differs from `current`. Switching or saving a preset puts `next` in place,
+// so with the policy off any such key blocks it. GUI thread only.
+static std::vector<std::string> sensitive_key_changes(const DynamicPrintConfig &current, const DynamicPrintConfig &next)
+{
+    std::vector<std::string> out;
+    for (const std::string &key : next.keys()) {
+        if (!is_sensitive_config_key(key)) continue;
+        const ConfigOption *a = current.option(key);
+        const ConfigOption *b = next.option(key);
+        if (b == nullptr) continue;
+        if (a == nullptr ? !b->serialize().empty() : !(*a == *b))
+            out.push_back(key);
+    }
+    return out;
+}
+
 // What POST /preset/config hides. GET /config already drops the whole host block
 // (full_config_secure), but a named preset's config is returned as stored, so the
 // credentials are replaced and any user:password inside a host URL (the print_host
@@ -1438,6 +1455,15 @@ Response Controller::handle_select_preset(const std::string &body)
                 return {{"error", "unknown_preset"}};
             if (!preset->is_compatible)
                 return {{"error", "incompatible_preset"}};
+            if (!sensitive_writes_allowed() && !preset->is_user()) {
+                // A filament preset carries filament_start/end_gcode; a system one
+                // may only replace the slot when those match what is in use now.
+                const std::vector<std::string> keys = sensitive_key_changes(bundle->filaments.get_edited_preset().config, preset->config);
+                if (!keys.empty())
+                    return {{"error", "blocked_by_remote_api_policy"}, {"keys", keys},
+                            {"detail", "this preset brings its own G-code; pick one of your own presets, or tick "
+                                       "Preferences > Remote API > Allow script, G-code and connection edits"}};
+            }
             // Single-filament printer: slot 0 is the Filament tab's preset.
             if (!sidebar.is_multifilament())
                 return {{"use_tab", true}};
@@ -1459,7 +1485,8 @@ Response Controller::handle_select_preset(const std::string &body)
         if (!r.contains("use_tab")) {
             if (r.contains("error")) {
                 const std::string err = r["error"].get<std::string>();
-                if (err == "unknown_preset" || err == "incompatible_preset" || err == "slot_out_of_range") {
+                if (err == "unknown_preset" || err == "incompatible_preset" || err == "slot_out_of_range" ||
+                    err == "blocked_by_remote_api_policy") {
                     api_notify("Can't use filament preset '" + name + "' for filament " + std::to_string(slot + 1), true);
                     return { 422, r };
                 }
@@ -1477,8 +1504,26 @@ Response Controller::handle_select_preset(const std::string &body)
                                                                     bundle->printers;
         // Validate up front: select_preset silently falls back to a visible preset
         // for an unknown name, so its return can't be trusted for a 422.
-        if (presets.find_preset(name, false, true) == nullptr)
+        const Preset *target = presets.find_preset(name, false, true);
+        if (target == nullptr)
             return {{"error", "unknown_preset"}};
+        // With "Allow script, G-code and connection edits" off, a switch must not
+        // bring start/end G-code, scripts or a connection with it. A printer preset
+        // is the machine itself (G-code flavour, start/end G-code), so only the
+        // user's own printer presets are selectable; a print or filament preset
+        // that is not the user's own passes only when its sensitive keys match.
+        if (!sensitive_writes_allowed() && !target->is_user()) {
+            if (type == Preset::TYPE_PRINTER)
+                return {{"error", "blocked_by_remote_api_policy"},
+                        {"detail", "only your own (user) printer presets can be selected through the API; select system "
+                                   "printer presets in OrcaSlicer, or tick Preferences > Remote API > Allow script, "
+                                   "G-code and connection edits"}};
+            const std::vector<std::string> keys = sensitive_key_changes(presets.get_edited_preset().config, target->config);
+            if (!keys.empty())
+                return {{"error", "blocked_by_remote_api_policy"}, {"keys", keys},
+                        {"detail", "this preset brings its own script or G-code; pick one of your own presets, or tick "
+                                   "Preferences > Remote API > Allow script, G-code and connection edits"}};
+        }
         Tab *tab = wxGetApp().get_tab(type);
         if (tab == nullptr) return {{"error", "tab_unavailable"}};
         // Discard un-applied GUI edits on EVERY collection Tab::select_preset may
@@ -1512,6 +1557,10 @@ Response Controller::handle_select_preset(const std::string &body)
     if (r.contains("error")) {
         if (r["error"] == "unknown_preset") {
             api_notify("No such " + type_s + " preset '" + name + "'", true);
+            return { 422, r };
+        }
+        if (r["error"] == "blocked_by_remote_api_policy") {
+            api_notify("Couldn't switch to " + type_s + " preset '" + name + "' (blocked, see Preferences > Remote API)", true);
             return { 422, r };
         }
         return { 500, r };
@@ -1564,6 +1613,22 @@ Response Controller::handle_save_preset(const std::string &body)
         const Preset *existing = presets.find_preset(name, false);
         if (existing != nullptr && (existing->is_system || existing->is_default))
             return {{"error", "name_reserved"}};
+        // Overwriting a preset replaces saved work, like replacing a project file.
+        if (existing != nullptr && !project_file_changes_allowed())
+            return {{"error", "blocked_by_remote_api_policy"},
+                    {"detail", "a preset with this name exists; overwriting it needs Preferences > Remote API > Allow "
+                               "deleting and replacing project files"}};
+        // The edited config is what gets saved. Its script/G-code/connection keys
+        // must match the preset it replaces (or, for a new name, the saved state
+        // of the selected preset), so the API cannot persist such a change.
+        if (!sensitive_writes_allowed()) {
+            const DynamicPrintConfig &reference = existing != nullptr ? existing->config : presets.get_selected_preset().config;
+            const std::vector<std::string> keys = sensitive_key_changes(reference, presets.get_edited_preset().config);
+            if (!keys.empty())
+                return {{"error", "blocked_by_remote_api_policy"}, {"keys", keys},
+                        {"detail", "the settings to save change script, G-code or connection keys; save in OrcaSlicer, "
+                                   "or tick Preferences > Remote API > Allow script, G-code and connection edits"}};
+        }
         Tab *tab = wxGetApp().get_tab(type);
         if (tab == nullptr) return {{"error", "tab_unavailable"}};
         bool created = existing == nullptr;
@@ -1577,6 +1642,10 @@ Response Controller::handle_save_preset(const std::string &body)
         if (r["error"] == "name_reserved") {
             api_notify("Can't overwrite built-in " + type_s + " preset '" + name + "'", true);
             return { 409, r };
+        }
+        if (r["error"] == "blocked_by_remote_api_policy") {
+            api_notify("Couldn't save " + type_s + " preset '" + name + "' (blocked, see Preferences > Remote API)", true);
+            return { 422, r };
         }
         return { 500, r };
     }
@@ -1789,6 +1858,10 @@ Response Controller::handle_delete_preset(const std::string &body)
         const Preset *p = presets->find_preset(name, false);
         if (p == nullptr) return {{"error", "unknown_preset"}};
         if (p->is_system || p->is_default) return {{"error", "builtin_preset"}};
+        // Deleting a user preset removes its file for good, like deleting a project.
+        if (!project_file_changes_allowed())
+            return {{"error", "blocked_by_remote_api_policy"},
+                    {"detail", "deleting presets needs Preferences > Remote API > Allow deleting and replacing project files"}};
         if (presets->get_selected_preset_name() == name)
             return {{"error", "preset_selected"},
                     {"detail", "select another preset first, then delete"}};
@@ -1808,6 +1881,10 @@ Response Controller::handle_delete_preset(const std::string &body)
     if (r.contains("error")) {
         if (r["error"] == "unknown_preset") return { 404, r };
         if (r["error"] == "delete_failed")  return { 500, r };
+        if (r["error"] == "blocked_by_remote_api_policy") {
+            api_notify("Couldn't delete " + type_s + " preset '" + name + "' (blocked, see Preferences > Remote API)", true);
+            return { 422, r };
+        }
         return { 409, r };
     }
     return { 200, r };
