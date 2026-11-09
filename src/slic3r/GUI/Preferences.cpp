@@ -2639,13 +2639,13 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     auto port_title = new wxStaticText(m_parent, wxID_ANY, _L("Port"), wxDefaultPosition, DESIGN_TITLE_SIZE, wxST_NO_AUTORESIZE);
     port_title->SetForegroundColour(DESIGN_GRAY900_COLOR);
     port_title->SetFont(::Label::Body_14);
-    port_title->SetToolTip(_L("TCP port for the Remote API (default 13131)"));
+    port_title->SetToolTip(_L("TCP port for the Remote API (default 13132)"));
     port_title->Wrap(DESIGN_TITLE_SIZE.x);
 
     auto port_input = new ::TextInput(m_parent, wxEmptyString, wxEmptyString, wxEmptyString, wxDefaultPosition, DESIGN_INPUT_SIZE, wxTE_PROCESS_ENTER);
     StateColor port_bg(std::pair<wxColour, int>(wxColour("#F0F0F1"), StateColor::Disabled), std::pair<wxColour, int>(*wxWHITE, StateColor::Enabled));
     port_input->SetBackgroundColor(port_bg);
-    port_input->SetToolTip(_L("TCP port for the Remote API (default 13131)"));
+    port_input->SetToolTip(_L("TCP port for the Remote API (default 13132)"));
     port_input->GetTextCtrl()->SetValidator(wxTextValidator(wxFILTER_DIGITS));
     port_input->GetTextCtrl()->SetValue(port_display());
 
