@@ -2664,6 +2664,18 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     port_sizer->Add(port_input, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
     g_sizer->Add(port_sizer);
 
+    // Server state as of opening this dialog, so a port that could not be
+    // opened (in use by another app) is visible here, not only in the log.
+    {
+        wxBoxSizer *status_sizer = new wxBoxSizer(wxHORIZONTAL);
+        auto status_text = new wxStaticText(m_parent, wxID_ANY, wxString::FromUTF8(wxGetApp().remote_api_status_text()));
+        status_text->SetForegroundColour(DESIGN_GRAY900_COLOR);
+        status_text->SetFont(::Label::Body_14);
+        status_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+        status_sizer->Add(status_text, 0, wxALIGN_CENTER_VERTICAL);
+        g_sizer->Add(status_sizer);
+    }
+
     // Token row: read-only display + regenerate. Bespoke (not one of the stock
     // create_item_* factories) because it needs three widgets sharing one row and
     // a button action that also restarts the running server.

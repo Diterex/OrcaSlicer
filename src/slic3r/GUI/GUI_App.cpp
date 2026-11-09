@@ -8339,6 +8339,17 @@ void GUI_App::stop_sync_user_preset()
 
 RemoteAPI::Server &GUI_App::remote_api_server() { return *m_remote_api_server; }
 
+std::string GUI_App::remote_api_status_text()
+{
+    if (m_remote_api_server->running())
+        return "Status: listening on " + std::string(m_remote_api_server->config().bind_lan ? "all interfaces" : "127.0.0.1") +
+               " port " + std::to_string(m_remote_api_server->port());
+    const std::string err = m_remote_api_server->last_error();
+    if (!err.empty())
+        return "Status: NOT running - could not open port " + std::to_string(m_remote_api_server->port()) + ": " + err;
+    return "Status: off";
+}
+
 void GUI_App::start_remote_api()
 {
     auto cfg = RemoteAPI::Config::load();
@@ -8350,11 +8361,22 @@ void GUI_App::start_remote_api()
         return m_remote_api_controller->dispatch(req);
     });
     m_remote_api_server->start(cfg);
+    if (!m_remote_api_server->running()) {
+        // Most often the port is taken (another app, or a just-closed server
+        // still in TIME_WAIT under SO_EXCLUSIVEADDRUSE). Say so on screen.
+        const std::string msg = "Remote API could not start on port " + std::to_string(cfg.port) + ": " +
+                                m_remote_api_server->last_error() + ". Change the port in Preferences > Remote API.";
+        if (plater_ != nullptr && plater_->get_notification_manager() != nullptr)
+            plater_->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                NotificationManager::NotificationLevel::ErrorNotificationLevel, msg);
+    }
 }
 
 void GUI_App::stop_remote_api()
 {
+    RemoteAPI::Controller::set_shutting_down(true);
     m_remote_api_server->stop();
+    RemoteAPI::Controller::set_shutting_down(false);
 }
 
 void GUI_App::restart_sync_user_preset()
@@ -9222,10 +9244,18 @@ void GUI_App::open_preferences(PreferencesTab tab, const std::string& highlight_
         PreferencesDialog dlg(mainframe);
         dlg.select_tab(tab, highlight_option);
         dlg.ShowModal();
-        // Apply Remote API settings changed in the dialog (Task 7). Cheap and
-        // idempotent even if nothing Remote-API-related changed.
-        stop_remote_api();
-        start_remote_api(); // no-op if remote_api_enabled is false
+        // Apply Remote API settings changed in the dialog. Restart only when one
+        // of them changed (or a previous start failed): a needless restart drops
+        // connected clients and, under SO_EXCLUSIVEADDRUSE, can fail to rebind.
+        const RemoteAPI::Config api_after = RemoteAPI::Config::load();
+        // Compared with what the server runs now, so the token button's own
+        // restart is not repeated here.
+        const bool api_restart = api_after.enabled ? (!m_remote_api_server->running() || api_after != m_remote_api_server->config())
+                                                   : m_remote_api_server->running();
+        if (api_restart) {
+            stop_remote_api();
+            start_remote_api(); // no-op if remote_api_enabled is false
+        }
         need_recreate_gui = dlg.recreate_GUI();
         pending_language = dlg.pending_language();
         if (!need_recreate_gui) {

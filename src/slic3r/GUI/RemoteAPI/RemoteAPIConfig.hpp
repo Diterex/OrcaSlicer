@@ -17,6 +17,12 @@ struct Config
     bool        notify   { true };  // toast in-app when the API changes state
     std::string token;
 
+    bool operator==(const Config &o) const
+    {
+        return enabled == o.enabled && port == o.port && bind_lan == o.bind_lan && token == o.token;
+    }
+    bool operator!=(const Config &o) const { return !(*this == o); }
+
     static Config      load();
     void               save() const;
     // 32 hex chars from std::random_device. Not for cryptographic secrets in
