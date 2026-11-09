@@ -5528,6 +5528,15 @@ std::set<std::string> PresetBundle::project_different_keys(const std::string &di
     Slic3r::unescape_strings_cstyle(different_settings, keys);
     std::set<std::string> keys_set(keys.begin(), keys.end());
     keys_set.insert(ignore_settings_list.begin(), ignore_settings_list.end());
+    // Clay fork: no system preset declares an ldm_* key, so the "system" value is only
+    // the compiled default, and older clay projects do not list these keys in
+    // different_settings_to_system (see ldm_printer_option_keys below). Treat every
+    // ldm_* key as changed by the project, so loading a project (GUI and, since
+    // OrcaSlicer 2.5's CLI refresh in CLI::run load_project_preset, the CLI too)
+    // keeps its clay values instead of resetting them to the defaults.
+    for (const auto &opt : print_config_def.options)
+        if (opt.first.rfind("ldm_", 0) == 0)
+            keys_set.insert(opt.first);
     return keys_set;
 }
 
