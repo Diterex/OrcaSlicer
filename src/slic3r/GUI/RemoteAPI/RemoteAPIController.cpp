@@ -126,6 +126,8 @@ static std::string api_config_unit(const std::string &key)
 }
 
 static int find_object_index(const Model &model, uint64_t id); // defined with the M4b object handlers below
+static boost::filesystem::path path_from_utf8(const std::string &s); // defined with the project file helpers below
+static bool is_network_path(const std::string &p); // defined above dispatch()
 static bool sensitive_writes_allowed(); // defined with the sensitive-key policy below
 static bool project_file_changes_allowed(); // defined with the sensitive-key policy below
 static bool project_has_unsaved_changes(Plater *plater); // defined with the project handlers below
@@ -1344,28 +1346,43 @@ Response Controller::handle_load_model(const std::string &body)
     // STEP (and mesh import of a very large STL) can exceed 10 s, and the load
     // would still complete on the GUI thread after a ui_timeout was returned.
     nlohmann::json r = run_on_ui([path, is_step]() -> nlohmann::json {
-        if (!boost::filesystem::exists(path))
+        // The API carries UTF-8; a plain narrow boost path would read it in the
+        // ANSI code page on Windows and miss any non-ASCII file name.
+        const boost::filesystem::path fpath = path_from_utf8(path);
+        boost::system::error_code fec;
+        if (!boost::filesystem::exists(fpath, fec))
             return {{"error", "file_not_found"}}; // not "not_found": that token means a missing route (F18)
         Plater *plater = wxGetApp().plater();
         // Use the stored deflection defaults instead of StepMeshDialog and skip
-        // the non-UTF8 name warning while loading; restore the user's flags after.
-        AppConfig *cfg = wxGetApp().app_config;
-        const bool prev_mesh_dlg  = cfg->get_bool("enable_step_mesh_setting");
-        const bool prev_utf8_warn = cfg->get_bool("step_not_utf8_no_warn");
-        if (is_step) {
-            cfg->set_bool("enable_step_mesh_setting", false);
-            cfg->set_bool("step_not_utf8_no_warn", true);
-        }
+        // the non-UTF8 name warning while loading; the guard puts the user's
+        // flags back however the load ends (an exception included).
+        struct StepFlagsGuard
+        {
+            AppConfig *cfg;
+            bool       active, prev_mesh_dlg, prev_utf8_warn;
+            StepFlagsGuard(AppConfig *c, bool on)
+                : cfg(c), active(on), prev_mesh_dlg(c->get_bool("enable_step_mesh_setting")),
+                  prev_utf8_warn(c->get_bool("step_not_utf8_no_warn"))
+            {
+                if (active) {
+                    cfg->set_bool("enable_step_mesh_setting", false);
+                    cfg->set_bool("step_not_utf8_no_warn", true);
+                }
+            }
+            ~StepFlagsGuard()
+            {
+                if (active) {
+                    cfg->set_bool("enable_step_mesh_setting", prev_mesh_dlg);
+                    cfg->set_bool("step_not_utf8_no_warn", prev_utf8_warn);
+                }
+            }
+        } step_flags(wxGetApp().app_config, is_step);
         // File > Import's snapshot: without it the undo stack never moves, so the
         // project never reads as unsaved and new/open would drop the model unasked.
         Plater::TakeSnapshot snapshot(plater, "Import Object");
         // 2.5.0 dropped the std::string overload; it did this same conversion.
-        std::vector<size_t> idxs = plater->load_files(std::vector<boost::filesystem::path>{ boost::filesystem::path(path) },
+        std::vector<size_t> idxs = plater->load_files(std::vector<boost::filesystem::path>{ fpath },
                                                       LoadStrategy::LoadModel);
-        if (is_step) {
-            cfg->set_bool("enable_step_mesh_setting", prev_mesh_dlg);
-            cfg->set_bool("step_not_utf8_no_warn", prev_utf8_warn);
-        }
         if (idxs.empty())
             return {{"error", "load_failed"}};
         nlohmann::json objects = nlohmann::json::array();
@@ -2935,6 +2952,8 @@ Response Controller::handle_open_project(const std::string &body)
         });
         if (resolved.contains("error")) return project_error_response(resolved);
         path = resolved["path"].get<std::string>();
+        if (is_network_path(path))
+            return { 400, {{"error", "network_path_not_allowed"}, {"path", path}} };
     }
     if (path.empty()) return { 400, {{"error", "missing_path"}, {"detail", "pass path or recent"}} };
     std::string if_unsaved = "fail";
@@ -3379,10 +3398,38 @@ Response Controller::handle_delete_project_file(const std::string &body)
     return { 200, r };
 }
 
+// \\server\share, //server/share and \\?\UNC\... (and any other path starting with
+// two slashes). Opening one makes Windows authenticate to that host - handing it
+// the user's NTLM credentials - and reaches files that are not on this computer.
+static bool is_network_path(const std::string &p)
+{
+    return p.size() >= 2 && (p[0] == '\\' || p[0] == '/') && (p[1] == '\\' || p[1] == '/');
+}
+
+// Every route that takes a path names it "path", "from", "to" (JSON body) or "dir"
+// (query or body). Returns the first network path found.
+static std::optional<std::string> network_path_in_request(const Request &req)
+{
+    const std::string dir = target_query_param(req.target, "dir");
+    if (is_network_path(dir)) return dir;
+    if (req.body.empty() || req.body.find_first_not_of(" \t\r\n") == std::string::npos) return std::nullopt;
+    nlohmann::json in = nlohmann::json::parse(req.body, nullptr, /*allow_exceptions=*/false);
+    if (!in.is_object()) return std::nullopt; // malformed bodies get the route's own 400
+    for (const char *k : {"path", "from", "to", "dir"}) {
+        auto it = in.find(k);
+        if (it != in.end() && it->is_string() && is_network_path(it->get<std::string>()))
+            return it->get<std::string>();
+    }
+    return std::nullopt;
+}
+
 Response Controller::dispatch(const Request &req)
 {
     try {
         const std::string &t = req.target;
+        if (std::optional<std::string> net_path = network_path_in_request(req))
+            return { 400, {{"error", "network_path_not_allowed"}, {"path", *net_path},
+                           {"detail", "network (UNC) paths are refused; copy the file to this computer"}} };
         // Match method + exact path, allowing only a query string after it
         // (so /api/v1/statuses does NOT prefix-match /api/v1/status).
         auto is = [&](const char *m, const char *path) {
