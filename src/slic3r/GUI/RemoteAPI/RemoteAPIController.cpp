@@ -29,6 +29,11 @@
 #include "slic3r/GUI/WipeTowerDialog.hpp"  // project scope: is_flush_config_modified
 #include "slic3r/GUI/GUI.hpp"              // project files: into_path/from_path for the 3mf paths
 #include "slic3r/GUI/MainFrame.hpp"        // project files: the File > Recent list
+#include "libslic3r/Utils.hpp"             // physical limits: data_dir()
+#include <boost/nowide/fstream.hpp>        // physical limits: remote_api_limits.json
+#include <map>
+#include <sstream>
+#include <cstdlib>
 
 #include <algorithm>
 #include <cmath>
@@ -466,6 +471,157 @@ static std::vector<std::string> sensitive_key_changes(const DynamicPrintConfig &
     return out;
 }
 
+// --- Physical limits (CeramicaSlicer) ------------------------------------------
+// The clay printer has no heater (none attached), no heated bed, and Klipper
+// allows Z down to -3. With "Allow script, G-code and connection edits" off, no
+// API write may put a setting in place that is unsafe for that machine: any
+// temperature above max_temperature_c (default 0: no heat at all), a change of
+// the locked keys (G-code flavour, auto temperature commands, filament diameter),
+// z_offset outside [z_offset_min_mm, z_offset_max_mm], or an acceleration above
+// max_acceleration_mm_s2. Only a value that CHANGES is judged, like the
+// sensitive keys: writing back what is already in use always passes.
+// The numbers live in <data dir>/remote_api_limits.json (written with these
+// defaults when missing) and are re-read on every check, so edits apply at once.
+// A file that cannot be parsed falls back to the defaults (the strict values).
+struct PhysicalLimits
+{
+    double                   max_temperature_c      = 0.;
+    std::vector<std::string> temperature_key_patterns{ "nozzle_temperature", "plate_temp", "chamber_temperature" };
+    std::vector<std::string> temperature_key_exclude{ "range" }; // nozzle_temperature_range_low/high are hints, not setpoints
+    std::vector<std::string> locked_keys{ "gcode_flavor", "autoemit_temperature_commands", "filament_diameter" };
+    double                   z_offset_min_mm        = -0.2;
+    double                   z_offset_max_mm        = 2.0;
+    double                   max_acceleration_mm_s2 = 7000.;
+};
+
+static nlohmann::json physical_limits_json(const PhysicalLimits &l)
+{
+    return {
+        {"_comment", "CeramicaSlicer Remote API physical limits. Applied to API writes (PUT /config, object config, "
+                     "project open, preset switch and save) while Preferences > Remote API > 'Allow script, G-code and "
+                     "connection edits' is off. Only values that change are checked. Re-read on every request."},
+        {"max_temperature_c", l.max_temperature_c},
+        {"temperature_key_patterns", l.temperature_key_patterns},
+        {"temperature_key_exclude", l.temperature_key_exclude},
+        {"locked_keys", l.locked_keys},
+        {"z_offset_min_mm", l.z_offset_min_mm},
+        {"z_offset_max_mm", l.z_offset_max_mm},
+        {"max_acceleration_mm_s2", l.max_acceleration_mm_s2},
+    };
+}
+
+static boost::filesystem::path physical_limits_path()
+{
+    return boost::filesystem::path(Slic3r::data_dir()) / "remote_api_limits.json";
+}
+
+// GUI thread only.
+static PhysicalLimits load_physical_limits()
+{
+    PhysicalLimits             l;
+    const boost::filesystem::path p = physical_limits_path();
+    boost::system::error_code  ec;
+    if (!boost::filesystem::exists(p, ec)) {
+        try {
+            boost::nowide::ofstream out(p.string());
+            out << physical_limits_json(l).dump(2) << "\n";
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << "remote-api: could not write " << p.string();
+        }
+        return l;
+    }
+    try {
+        boost::nowide::ifstream in(p.string());
+        const nlohmann::json j = nlohmann::json::parse(in);
+        l.max_temperature_c        = j.value("max_temperature_c", l.max_temperature_c);
+        l.temperature_key_patterns = j.value("temperature_key_patterns", l.temperature_key_patterns);
+        l.temperature_key_exclude  = j.value("temperature_key_exclude", l.temperature_key_exclude);
+        l.locked_keys              = j.value("locked_keys", l.locked_keys);
+        l.z_offset_min_mm          = j.value("z_offset_min_mm", l.z_offset_min_mm);
+        l.z_offset_max_mm          = j.value("z_offset_max_mm", l.z_offset_max_mm);
+        l.max_acceleration_mm_s2   = j.value("max_acceleration_mm_s2", l.max_acceleration_mm_s2);
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "remote-api: " << p.string() << " unreadable (" << e.what() << "), using the strict defaults";
+        return PhysicalLimits{};
+    }
+    return l;
+}
+
+// The numbers in an option's serialized value ("210", "0,0", "5000"); percentages
+// and non-numeric parts are skipped.
+static std::vector<double> option_numbers(const ConfigOption *opt)
+{
+    std::vector<double> out;
+    if (opt == nullptr) return out;
+    std::vector<std::string> parts;
+    if (const auto *vec = dynamic_cast<const ConfigOptionVectorBase *>(opt))
+        parts = vec->vserialize();
+    else
+        parts.push_back(opt->serialize());
+    for (std::string s : parts) {
+        while (!s.empty() && (s.back() == ' ')) s.pop_back();
+        if (s.empty() || s.back() == '%') continue;
+        char *end = nullptr;
+        const double v = std::strtod(s.c_str(), &end);
+        if (end != s.c_str() && *end == '\0') out.push_back(v);
+    }
+    return out;
+}
+
+static std::string fmt_num(double v)
+{
+    std::ostringstream ss;
+    ss << v;
+    return ss.str();
+}
+
+// Why `opt` (the new value of `key`) breaks a physical limit, or "" when it does
+// not. Call only for a value that differs from the one in use.
+static std::string physical_limit_error(const PhysicalLimits &l, const std::string &key, const ConfigOption *opt)
+{
+    const std::string where = " (remote_api_limits.json)";
+    if (std::find(l.locked_keys.begin(), l.locked_keys.end(), key) != l.locked_keys.end())
+        return "blocked_by_physical_limits: " + key + " is locked" + where;
+    bool is_temp = false;
+    for (const std::string &pat : l.temperature_key_patterns)
+        if (!pat.empty() && key.find(pat) != std::string::npos) is_temp = true;
+    for (const std::string &ex : l.temperature_key_exclude)
+        if (!ex.empty() && key.find(ex) != std::string::npos) is_temp = false;
+    const std::vector<double> nums = option_numbers(opt);
+    if (is_temp)
+        for (double v : nums)
+            if (v > l.max_temperature_c)
+                return "blocked_by_physical_limits: " + key + " = " + fmt_num(v) + " C, the limit is " +
+                       fmt_num(l.max_temperature_c) + " C (this printer has no heater)" + where;
+    if (key == "z_offset")
+        for (double v : nums)
+            if (v < l.z_offset_min_mm || v > l.z_offset_max_mm)
+                return "blocked_by_physical_limits: z_offset = " + fmt_num(v) + " mm, allowed " + fmt_num(l.z_offset_min_mm) +
+                       " to " + fmt_num(l.z_offset_max_mm) + " mm" + where;
+    if (key.find("acceleration") != std::string::npos)
+        for (double v : nums)
+            if (v > l.max_acceleration_mm_s2)
+                return "blocked_by_physical_limits: " + key + " = " + fmt_num(v) + " mm/s2, the limit is " +
+                       fmt_num(l.max_acceleration_mm_s2) + where;
+    return {};
+}
+
+// Every key whose value in `next` differs from `current` and breaks a limit:
+// key -> reason. For a preset switch or save, and a project open.
+static std::map<std::string, std::string> physical_limit_changes(const PhysicalLimits &l, const DynamicPrintConfig &current,
+                                                                 const DynamicPrintConfig &next)
+{
+    std::map<std::string, std::string> out;
+    for (const std::string &key : next.keys()) {
+        const ConfigOption *b = next.option(key);
+        const ConfigOption *a = current.option(key);
+        if (b == nullptr || (a != nullptr && *a == *b)) continue;
+        std::string err = physical_limit_error(l, key, b);
+        if (!err.empty()) out[key] = err;
+    }
+    return out;
+}
+
 // What POST /preset/config hides. GET /config already drops the whole host block
 // (full_config_secure), but a named preset's config is returned as stored, so the
 // credentials are replaced and any user:password inside a host URL (the print_host
@@ -728,6 +884,7 @@ Response Controller::handle_put_config(const std::string &body)
     nlohmann::json result = run_on_ui([in = std::move(in)]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         const bool allow_sensitive = sensitive_writes_allowed();
+        const PhysicalLimits limits = allow_sensitive ? PhysicalLimits{} : load_physical_limits();
 
         struct Target {
             Preset::Type        type;
@@ -859,6 +1016,13 @@ Response Controller::handle_put_config(const std::string &body)
                     errors[key] = "blocked_by_remote_api_policy";
                     continue;
                 }
+                if (!allow_sensitive && newv != oldv) {
+                    const std::string lerr = physical_limit_error(limits, key, tgt->cfg.option(key));
+                    if (!lerr.empty()) {
+                        errors[key] = lerr;
+                        continue;
+                    }
+                }
                 tgt->touched = true;
                 applied.push_back(key);
                 // The notification is on screen, so it never shows a credential.
@@ -890,6 +1054,8 @@ Response Controller::handle_put_config(const std::string &body)
                 emsg += api_config_label(it2.key());
                 if (it2.value() == "blocked_by_remote_api_policy")
                     emsg += " (blocked, see Preferences > Remote API)";
+                else if (it2.value().is_string() && it2.value().get<std::string>().rfind("blocked_by_physical_limits", 0) == 0)
+                    emsg += " (outside this printer's safe limits)";
             }
             api_notify(emsg, true);
             return {{"applied", nlohmann::json::array()}, {"errors", errors}};
@@ -1455,6 +1621,12 @@ Response Controller::handle_select_preset(const std::string &body)
                 return {{"error", "unknown_preset"}};
             if (!preset->is_compatible)
                 return {{"error", "incompatible_preset"}};
+            if (!sensitive_writes_allowed()) {
+                const auto lim = physical_limit_changes(load_physical_limits(), bundle->filaments.get_edited_preset().config, preset->config);
+                if (!lim.empty())
+                    return {{"error", "blocked_by_remote_api_policy"}, {"limits", lim},
+                            {"detail", "this preset has settings outside this printer's safe limits (remote_api_limits.json)"}};
+            }
             if (!sensitive_writes_allowed() && !preset->is_user()) {
                 // A filament preset carries filament_start/end_gcode; a system one
                 // may only replace the slot when those match what is in use now.
@@ -1512,6 +1684,12 @@ Response Controller::handle_select_preset(const std::string &body)
         // is the machine itself (G-code flavour, start/end G-code), so only the
         // user's own printer presets are selectable; a print or filament preset
         // that is not the user's own passes only when its sensitive keys match.
+        if (!sensitive_writes_allowed()) {
+            const auto lim = physical_limit_changes(load_physical_limits(), presets.get_edited_preset().config, target->config);
+            if (!lim.empty())
+                return {{"error", "blocked_by_remote_api_policy"}, {"limits", lim},
+                        {"detail", "this preset has settings outside this printer's safe limits (remote_api_limits.json)"}};
+        }
         if (!sensitive_writes_allowed() && !target->is_user()) {
             if (type == Preset::TYPE_PRINTER)
                 return {{"error", "blocked_by_remote_api_policy"},
@@ -1628,6 +1806,10 @@ Response Controller::handle_save_preset(const std::string &body)
                 return {{"error", "blocked_by_remote_api_policy"}, {"keys", keys},
                         {"detail", "the settings to save change script, G-code or connection keys; save in OrcaSlicer, "
                                    "or tick Preferences > Remote API > Allow script, G-code and connection edits"}};
+            const auto lim = physical_limit_changes(load_physical_limits(), reference, presets.get_edited_preset().config);
+            if (!lim.empty())
+                return {{"error", "blocked_by_remote_api_policy"}, {"limits", lim},
+                        {"detail", "the settings to save are outside this printer's safe limits (remote_api_limits.json)"}};
         }
         Tab *tab = wxGetApp().get_tab(type);
         if (tab == nullptr) return {{"error", "tab_unavailable"}};
@@ -2217,6 +2399,16 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
             }
             try {
                 cfg.set_deserialize_strict(key, json_value_to_config_string(it.value()));
+                if (!allow_sensitive) {
+                    // The value in force for this object now: its own override, else the global one.
+                    const DynamicPrintConfig full = wxGetApp().preset_bundle->full_config();
+                    const ConfigOption *cur = mo->config.has(key) ? mo->config.option(key) : full.option(key);
+                    const ConfigOption *nv  = cfg.option(key);
+                    if (nv != nullptr && (cur == nullptr || !(*cur == *nv))) {
+                        const std::string lerr = physical_limit_error(load_physical_limits(), key, nv);
+                        if (!lerr.empty()) { errors[key] = lerr; continue; }
+                    }
+                }
                 applied.push_back(key);
             } catch (const std::exception &e) { errors[key] = e.what(); }
         }
@@ -2717,7 +2909,8 @@ static bool parse_if_unsaved(const nlohmann::json &in, std::string &if_unsaved)
 // false and `first_filament` skip what presets: keep_current puts back anyway.
 // GUI thread only. Throws when the file cannot be read.
 static std::set<std::string> project_sensitive_changes(const std::string &path_utf8, bool check_print_printer,
-                                                       size_t first_filament)
+                                                       size_t first_filament,
+                                                       std::map<std::string, std::string> *limit_errors = nullptr)
 {
     DynamicPrintConfig        cfg;
     ConfigSubstitutionContext subs{ForwardCompatibilitySubstitutionRule::Enable};
@@ -2793,6 +2986,22 @@ static std::set<std::string> project_sensitive_changes(const std::string &path_u
             if (differs(printer, key, 0)) keys.insert(key);
         } else if (owned_by(Preset::print_options(), key)) {
             if (differs(print, key, 0)) keys.insert(key);
+        }
+    }
+    // Physical limits: the project's printer/print values (unless keep_current puts
+    // the current presets back) and its filament values, against what is in use.
+    if (limit_errors != nullptr) {
+        const PhysicalLimits     limits  = load_physical_limits();
+        const DynamicPrintConfig current = bundle->full_config();
+        for (const std::string &key : cfg.keys()) {
+            const bool filament_key = owned_by(Preset::filament_options(), key);
+            if (!filament_key && !check_print_printer) continue;
+            if (!filament_key && !owned_by(Preset::printer_options(), key) && !owned_by(Preset::print_options(), key)) continue;
+            const ConfigOption *b = cfg.option(key);
+            const ConfigOption *a = current.option(key);
+            if (b == nullptr || (a != nullptr && *a == *b)) continue;
+            std::string err = physical_limit_error(limits, key, b);
+            if (!err.empty()) (*limit_errors)[key] = err;
         }
     }
     // Per-layer custom G-code is not a config key, so the loop above never sees
@@ -3085,11 +3294,17 @@ Response Controller::handle_open_project(const std::string &body)
         if (!sensitive_writes_allowed()) {
             const bool keep_current = presets == "keep_current";
             std::set<std::string> keys;
+            std::map<std::string, std::string> limit_errors;
             try {
-                keys = project_sensitive_changes(path, !keep_current, keep_current ? bundle->filament_presets.size() : 0);
+                keys = project_sensitive_changes(path, !keep_current, keep_current ? bundle->filament_presets.size() : 0,
+                                                 &limit_errors);
             } catch (const std::exception &ex) {
                 return {{"error", "load_failed"}, {"path", path}, {"detail", ex.what()}};
             }
+            if (!limit_errors.empty())
+                return {{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"limits", limit_errors},
+                        {"detail", "the project has settings outside this printer's safe limits "
+                                   "(remote_api_limits.json); open it in OrcaSlicer to review"}};
             if (!keys.empty())
                 return {{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"keys", keys},
                         {"detail", "the project brings its own script, G-code or connection settings; open it in "
