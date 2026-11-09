@@ -3,6 +3,7 @@
 
 #include "libslic3r/Thread.hpp"
 #include <boost/log/trivial.hpp>
+#include <cctype>
 #include <deque>
 
 namespace beast = boost::beast;
@@ -97,12 +98,67 @@ private:
     void do_read()
     {
         m_stream.expires_after(std::chrono::seconds(15));
-        m_parser.body_limit(4 * 1024 * 1024); // bound request body before buffering (unauthenticated clients)
-        http::async_read(m_stream, m_buffer, m_parser,
+        m_parser.body_limit(4 * 1024 * 1024); // bound request body before buffering
+        // Headers first: reject a request that is not ours (browser origin,
+        // foreign Host, bad token) before reading up to 4 MB of body.
+        http::async_read_header(m_stream, m_buffer, m_parser,
             [self = shared_from_this()](beast::error_code ec, std::size_t) {
-                if (ec) return; // closed / timeout / parse error / body too large
-                self->handle();
+                if (ec) return; // closed / timeout / parse error
+                if (std::optional<Response> early = self->screen_headers()) {
+                    self->write_response(*early);
+                    return;
+                }
+                http::async_read(self->m_stream, self->m_buffer, self->m_parser,
+                    [self](beast::error_code ec2, std::size_t) {
+                        if (ec2) return; // closed / timeout / parse error / body too large
+                        self->handle();
+                    });
             });
+    }
+
+    // Token from ?token= on the events WebSocket upgrade (browser WS clients
+    // cannot set headers), else the X-Api-Token header.
+    std::string presented_token() const
+    {
+        const auto &req = m_parser.get();
+        if (beast::websocket::is_upgrade(req)) {
+            std::string target = std::string(req.target());
+            auto        tpos   = target.find("token=");
+            std::string wtok   = (tpos == std::string::npos) ? std::string() : target.substr(tpos + 6);
+            if (auto amp = wtok.find('&'); amp != std::string::npos) wtok.resize(amp);
+            return wtok;
+        }
+        auto tok_sv = req["X-Api-Token"];
+        return std::string(tok_sv.begin(), tok_sv.end());
+    }
+
+    // Header checks that need no body. Returns the reply for a rejected request.
+    std::optional<Response> screen_headers() const
+    {
+        const auto &req = m_parser.get();
+        // No legitimate client of this API is a web page. A browser always sends
+        // Origin on cross-site and WebSocket requests, so any Origin is refused
+        // (stops a page in the user's browser from driving the slicer).
+        if (req.find(http::field::origin) != req.end())
+            return Response{ 403, {{"error", "origin_not_allowed"}} };
+        // DNS rebinding: with the loopback-only default, the Host must name the
+        // loopback interface. (With LAN access on, any Host is accepted.)
+        if (!m_server.config().bind_lan && req.find(http::field::host) != req.end()) {
+            auto        h_sv = req[http::field::host];
+            std::string host(h_sv.begin(), h_sv.end());
+            if (!host.empty() && host.front() == '[') { // [::1]:port
+                auto rb = host.find(']');
+                host = rb == std::string::npos ? host : host.substr(0, rb + 1);
+            } else if (auto colon = host.rfind(':'); colon != std::string::npos) {
+                host.resize(colon);
+            }
+            for (auto &c : host) c = (char) std::tolower((unsigned char) c);
+            if (host != "127.0.0.1" && host != "localhost" && host != "[::1]")
+                return Response{ 403, {{"error", "host_not_allowed"}} };
+        }
+        if (!m_server.check_token(presented_token()))
+            return Response{ 401, {{"error", "unauthorized"}} };
+        return std::nullopt;
     }
 
     void handle()
@@ -121,13 +177,10 @@ private:
             }
             // otherwise fall through to the normal 401/404 JSON response
         }
-        // Auth first, everything else second.
-        auto        tok_sv = req["X-Api-Token"];
-        // iterator-pair ctor: safe when the header is absent (data() may be
-        // nullptr with size 0, which the (ptr,len) ctor treats as UB).
-        std::string token(tok_sv.begin(), tok_sv.end());
+        // Auth first, everything else second (already screened at the header
+        // stage; checked again here so this path never depends on that order).
         Response    r;
-        if (!m_server.check_token(token)) {
+        if (!m_server.check_token(presented_token())) {
             r = { 401, {{"error", "unauthorized"}} };
         } else if (!m_server.handler()) {
             r = { 503, {{"error", "no_handler"}} };
@@ -143,6 +196,12 @@ private:
                 r = { 500, {{"error", "internal"}, {"detail", e.what()}} };
             }
         }
+        write_response(r);
+    }
+
+    void write_response(const Response &r)
+    {
+        auto &req = m_parser.get();
         // Build the response defensively: json::dump() can throw on malformed
         // data (e.g. non-UTF-8 bytes), and this runs on the io thread where an
         // uncaught exception would call std::terminate() and kill the slicer.
