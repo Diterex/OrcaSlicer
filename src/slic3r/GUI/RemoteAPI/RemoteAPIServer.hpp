@@ -53,6 +53,9 @@ public:
     void start(const Config &cfg);
     void stop();
     bool running() const { return m_running; }
+    const Config &config() const { return m_cfg; }
+    // Why the last start() failed to listen (empty after a successful start).
+    std::string last_error() const { std::lock_guard<std::mutex> lk(m_ws_mutex); return m_last_error; }
     int  port() const { return m_cfg.port; }
 
     // Thread-safe: called from the GUI thread, writes go out on the io thread.
@@ -74,7 +77,8 @@ private:
     std::unique_ptr<boost::asio::io_context>   m_ioc;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> m_acceptor;
     boost::thread                              m_thread;
-    std::mutex                                 m_ws_mutex;
+    mutable std::mutex                         m_ws_mutex;
+    std::string                                m_last_error; // guarded by m_ws_mutex
     std::set<std::shared_ptr<WsSession>>       m_ws_sessions;
 };
 

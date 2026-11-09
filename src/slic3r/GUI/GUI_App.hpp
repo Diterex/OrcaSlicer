@@ -669,6 +669,8 @@ public:
     void            start_remote_api();
     void            stop_remote_api();
     RemoteAPI::Server &remote_api_server(); // defined in GUI_App.cpp (Server is only fwd-declared here)
+    // One line for Preferences > Remote API: listening port, or why it is not running.
+    std::string        remote_api_status_text();
 
     void            on_show_check_privacy_dlg(int online_login = 0, const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            show_check_privacy_dlg(wxCommandEvent& evt);

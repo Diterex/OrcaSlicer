@@ -41,6 +41,10 @@ public:
     // two can interleave on the GUI thread and corrupt what is being written).
     // GUI thread only.
     static bool api_ui_task_active();          // an API task is on the stack
+    // Set (GUI thread) around Server::stop(): request threads stop waiting for
+    // GUI tasks at once, so stop() can join the io thread without the GUI
+    // thread blocking for up to a task's timeout (120 s) on itself.
+    static void set_shutting_down(bool);
     static void set_backup_in_progress(bool);  // MainFrame brackets export_3mf;
                                                // false flushes deferred API tasks
 

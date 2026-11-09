@@ -29,6 +29,7 @@ Config Config::load()
     if (app_config->has("remote_api_port")) {
         try { cfg.port = std::stoi(app_config->get("remote_api_port")); }
         catch (...) { cfg.port = Config{}.port; }
+        if (cfg.port < 1 || cfg.port > 65535) cfg.port = Config{}.port; // hand-edited config
     }
     cfg.token = app_config->get("remote_api_token");
     if (cfg.token.empty()) {

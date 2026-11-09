@@ -35,8 +35,25 @@ public:
     // Called on the io thread (via net::post in Server::broadcast).
     void send(const std::string &text)
     {
+        // A client that stops reading must not grow this queue without bound;
+        // past the cap new events are dropped for that client only.
+        static constexpr size_t k_max_queued = 256;
+        if (m_queue.size() >= k_max_queued) {
+            if (!m_dropping) BOOST_LOG_TRIVIAL(warning) << "remote-api: WebSocket client not reading, dropping events";
+            m_dropping = true;
+            return;
+        }
+        m_dropping = false;
         m_queue.push_back(text);
         if (m_queue.size() == 1) do_write();
+    }
+
+    // Only after the io thread has been joined (Server::stop): closes the socket
+    // while its io_context still exists.
+    void close_socket()
+    {
+        beast::error_code ec;
+        beast::get_lowest_layer(m_ws).socket().close(ec);
     }
 
 private:
@@ -62,6 +79,7 @@ private:
     beast::websocket::stream<beast::tcp_stream> m_ws;
     beast::flat_buffer                          m_buffer;
     std::deque<std::string>                     m_queue;
+    bool                                        m_dropping { false };
     Server                                     &m_server;
 };
 
@@ -170,6 +188,7 @@ void Server::start(const Config &cfg)
 {
     if (m_running) stop();
     m_cfg = cfg;
+    { std::lock_guard<std::mutex> lk(m_ws_mutex); m_last_error.clear(); }
     try {
         m_ioc = std::make_unique<net::io_context>(1);
         auto address = m_cfg.bind_lan ? net::ip::address_v4::any()
@@ -194,8 +213,9 @@ void Server::start(const Config &cfg)
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "remote-api: failed to bind port " << m_cfg.port
                                  << ": " << e.what();
+        { std::lock_guard<std::mutex> lk(m_ws_mutex); m_last_error = e.what(); }
+        m_acceptor.reset(); // before the io_context it was created on
         m_ioc.reset();
-        m_acceptor.reset();
         return; // disabled for this run; the Preferences page shows "failed" via running()
     }
     m_running = true;
@@ -225,11 +245,29 @@ void Server::stop()
     m_running = false;
     if (m_ioc) m_ioc->stop();
     if (m_thread.joinable()) m_thread.join();
-    m_acceptor.reset();
-    m_ioc.reset();
+    // The io thread is gone, so nothing else touches these sockets now. Every
+    // socket must be closed and released BEFORE its io_context is destroyed:
+    // the WebSocket sessions used to be cleared after m_ioc.reset(), so their
+    // sockets were torn down against a freed io_context (use-after-free crash
+    // when Preferences closed with a client connected).
+    std::set<std::shared_ptr<WsSession>> sessions;
     {
         std::lock_guard<std::mutex> lk(m_ws_mutex);
-        m_ws_sessions.clear();
+        sessions.swap(m_ws_sessions);
+    }
+    for (auto &s : sessions) s->close_socket();
+    sessions.clear();
+    if (m_acceptor) {
+        beast::error_code ec;
+        m_acceptor->close(ec);
+        m_acceptor.reset();
+    }
+    if (m_ioc) {
+        // Let the aborted completions run so the sessions they hold are released
+        // here, then destroy the io_context last.
+        m_ioc->restart();
+        m_ioc->poll();
+        m_ioc.reset();
     }
     BOOST_LOG_TRIVIAL(info) << "remote-api: stopped";
 }

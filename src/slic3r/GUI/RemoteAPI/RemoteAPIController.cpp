@@ -239,6 +239,9 @@ void UiTask::run()
 
 bool Controller::api_ui_task_active() { return s_api_ui_task_depth > 0; }
 
+static std::atomic<bool> s_shutting_down { false };
+void Controller::set_shutting_down(bool v) { s_shutting_down = v; }
+
 void Controller::set_backup_in_progress(bool v)
 {
     s_backup_in_progress = v;
@@ -256,10 +259,22 @@ nlohmann::json Controller::run_on_ui(std::function<nlohmann::json()> fn, int tim
     task->cancelled = std::make_shared<std::atomic<bool>>(false);
     task->fn        = std::move(fn);
     auto future     = task->promise->get_future();
-    task->schedule();
-    if (future.wait_for(std::chrono::seconds(timeout_s)) != std::future_status::ready) {
+    if (s_shutting_down) {
         task->cancelled->store(true);
-        throw std::runtime_error("ui_timeout");
+        throw std::runtime_error("shutting_down");
+    }
+    task->schedule();
+    // Wait in short slices so a server stop is noticed within ~100 ms.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+    while (future.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready) {
+        if (s_shutting_down) {
+            task->cancelled->store(true);
+            throw std::runtime_error("shutting_down");
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            task->cancelled->store(true);
+            throw std::runtime_error("ui_timeout");
+        }
     }
     return future.get(); // rethrows GUI-side exceptions
 }
