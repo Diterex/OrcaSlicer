@@ -323,7 +323,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "preview_view", "gcode_flow"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -3152,6 +3152,244 @@ static std::string target_query_param(const std::string &target, const char *nam
     return {};
 }
 
+// --- preview: drive the on-screen Preview, read the processed G-code -------------
+// Both routes are read-only for the project, presets and files. preview/view only
+// changes what the Preview shows (colour scheme, layer range, active tab), exactly
+// as the legend's "Color scheme" combo and the layer slider do.
+
+// Friendly name -> view type, in the order of the legend's "Color scheme" combo
+// (GCodeViewer::update_by_mode).
+static const std::vector<std::pair<std::string, libvgcode::EViewType>> &preview_color_by_map()
+{
+    static const std::vector<std::pair<std::string, libvgcode::EViewType>> map = {
+        {"summary",          libvgcode::EViewType::Summary},
+        {"line_type",        libvgcode::EViewType::FeatureType},
+        {"filament",         libvgcode::EViewType::ColorPrint},
+        {"speed",            libvgcode::EViewType::Speed},
+        {"actual_speed",     libvgcode::EViewType::ActualSpeed},
+        {"acceleration",     libvgcode::EViewType::Acceleration},
+        {"jerk",             libvgcode::EViewType::Jerk},
+        {"layer_height",     libvgcode::EViewType::Height},
+        {"line_width",       libvgcode::EViewType::Width},
+        {"flow",             libvgcode::EViewType::VolumetricFlowRate},
+        {"actual_flow",      libvgcode::EViewType::ActualVolumetricFlowRate},
+        {"layer_time",       libvgcode::EViewType::LayerTimeLinear},
+        {"layer_time_log",   libvgcode::EViewType::LayerTimeLogarithmic},
+        {"fan_speed",        libvgcode::EViewType::FanSpeed},
+        {"temperature",      libvgcode::EViewType::Temperature},
+        {"pressure_advance", libvgcode::EViewType::PressureAdvance},
+    };
+    return map;
+}
+
+// POST /api/v1/preview/view {"color_by": "...", "layers": [lo, hi], "show_preview_tab": true}
+Response Controller::handle_preview_view(const std::string &body)
+{
+    nlohmann::json in = body.empty() ? nlohmann::json::object() : nlohmann::json::parse(body);
+    if (!in.is_object())
+        return { 400, {{"error", "invalid_json"}} };
+
+    nlohmann::json allowed = nlohmann::json::array();
+    for (const auto &e : preview_color_by_map()) allowed.push_back(e.first);
+    auto cit = in.find("color_by");
+    if (cit == in.end() || !cit->is_string())
+        return { 400, {{"error", "bad_param"}, {"param", "color_by"}, {"allowed", allowed}} };
+    const std::string color_by = cit->get<std::string>();
+    auto mit = std::find_if(preview_color_by_map().begin(), preview_color_by_map().end(),
+                            [&color_by](const auto &e) { return e.first == color_by; });
+    if (mit == preview_color_by_map().end())
+        return { 400, {{"error", "bad_param"}, {"param", "color_by"}, {"allowed", allowed}} };
+    const libvgcode::EViewType type = mit->second;
+
+    bool has_layers = false;
+    long lo = 0, hi = 0;
+    auto lit = in.find("layers");
+    if (lit != in.end() && !lit->is_null()) {
+        if (!lit->is_array() || lit->size() != 2 || !(*lit)[0].is_number() || !(*lit)[1].is_number())
+            return { 400, {{"error", "bad_param"}, {"param", "layers"}, {"detail", "expected [lo, hi], 1-based"}} };
+        lo = (long) std::llround((*lit)[0].get<double>());
+        hi = (long) std::llround((*lit)[1].get<double>());
+        if (lo > hi) std::swap(lo, hi);
+        has_layers = true;
+    }
+    bool show_tab = true;
+    auto sit = in.find("show_preview_tab");
+    if (sit != in.end() && !sit->is_null()) {
+        if (!sit->is_boolean())
+            return { 400, {{"error", "bad_param"}, {"param", "show_preview_tab"}} };
+        show_tab = sit->get<bool>();
+    }
+
+    nlohmann::json r = run_on_ui([type, color_by, has_layers, lo, hi, show_tab]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        PartPlate *plate = plater->get_partplate_list().get_curr_plate();
+        if (!plate->is_slice_result_valid())
+            return {{"error", "no_slice_result"}};
+        // Same as clicking the Preview tab (Plater::priv::select_next_view_3D does this too).
+        if (show_tab)
+            wxGetApp().mainframe->select_tab(wxString(TAB_ID_PREVIEW));
+        GLCanvas3D *canvas = plater->get_preview_canvas3D();
+        if (canvas == nullptr)
+            return {{"error", "preview_unavailable"}, {"reason", "no preview canvas"}};
+        GCodeViewer &viewer = canvas->get_gcode_viewer();
+        // The preview only loads while its panel is shown (see handle_plate_render).
+        if (!viewer.has_data())
+            plater->reload_print();
+        if (!viewer.has_data())
+            return {{"error", "preview_unavailable"}, {"reason", "gcode preview not loaded"}};
+
+        // The legend's "Color scheme" combo (GCodeViewer::render_legend).
+        viewer.select_view_type(type);
+        viewer.reset_visible(type);
+        const std::string view_type_name = GCodeViewer::view_type_to_config_name(type);
+        if (!view_type_name.empty())
+            wxGetApp().app_config->set("preview_last_view_type", view_type_name);
+        viewer.update_moves_slider();
+
+        // The vertical layer slider. Marking it dirty makes the next frame push the
+        // range into the viewer (GLCanvas3D::_render_gcode_overlay), as a drag does.
+        IMSlider *slider = viewer.get_layers_slider();
+        if (has_layers && slider != nullptr) {
+            const long max_idx = slider->GetMaxValue();
+            const long l = std::min(std::max(lo, 1L), max_idx + 1);
+            const long h = std::min(std::max(hi, l), max_idx + 1);
+            slider->SetSelectionSpan((int) (l - 1), (int) (h - 1));
+        }
+
+        // As the combo does: the canvas idle handler repaints a dirty canvas.
+        canvas->set_as_dirty();
+        canvas->request_extra_frame();
+
+        nlohmann::json out = {{"color_by", color_by}, {"layer_count", viewer.get_layers_count()}};
+        if (slider != nullptr)
+            out["layers"] = {slider->GetLowerValue() + 1, slider->GetHigherValue() + 1};
+        return out;
+    });
+    if (r.contains("error")) {
+        const std::string err = r["error"].get<std::string>();
+        return { err == "no_slice_result" ? 409 : 500, r };
+    }
+    return { 200, r };
+}
+
+// Stable lower_snake name of an extrusion role ("Outer wall" -> "outer_wall").
+static std::string role_slug(ExtrusionRole role)
+{
+    std::string s = ExtrusionEntity::role_to_string(role);
+    for (char &c : s) c = (c == ' ') ? '_' : (char) std::tolower((unsigned char) c);
+    return s;
+}
+
+// GET /api/v1/gcode/flow?below=<mm3/s>&role=<outer_wall...>&limit=<n>
+// Reads the current plate's GCodeProcessorResult - the same moves that colour the
+// Preview's "Actual volumetric speed" view.
+Response Controller::handle_gcode_flow(const std::string &target)
+{
+    double below = 100.0;
+    long   limit = 500;
+    try {
+        const std::string bs = target_query_param(target, "below");
+        const std::string ls = target_query_param(target, "limit");
+        if (!bs.empty()) below = std::stod(bs);
+        if (!ls.empty()) limit = std::stol(ls);
+    } catch (...) {
+        return { 400, {{"error", "bad_param"}, {"param", "below/limit"}} };
+    }
+    limit = std::min(std::max(limit, 0L), 5000L);
+
+    const std::string role_s = target_query_param(target, "role");
+    std::optional<ExtrusionRole> role_filter;
+    if (!role_s.empty()) {
+        nlohmann::json allowed = nlohmann::json::array();
+        for (int i = erNone; i < erCount; ++i) {
+            const std::string slug = role_slug((ExtrusionRole) i);
+            allowed.push_back(slug);
+            if (slug == role_s) role_filter = (ExtrusionRole) i;
+        }
+        if (!role_filter)
+            return { 400, {{"error", "bad_param"}, {"param", "role"}, {"allowed", allowed}} };
+    }
+
+    nlohmann::json r = run_on_ui([below, limit, role_filter]() -> nlohmann::json {
+        PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+        if (!plate->is_slice_result_valid())
+            return {{"error", "no_slice_result"}};
+        const GCodeProcessorResult *res = plate->get_slice_result();
+        if (res == nullptr || res->moves.empty())
+            return {{"error", "no_slice_result"}};
+        const auto &moves = res->moves;
+
+        // Layer numbers as the Preview's layer slider shows them: libvgcode renumbers
+        // the layer ids consecutively over moves[1..] (LibVGCodeWrapper.cpp, convert()).
+        std::vector<uint32_t> layer_of(moves.size(), 0);
+        uint32_t src_layer = std::numeric_limits<uint32_t>::max(), layer = 0;
+        for (size_t i = 1; i < moves.size(); ++i) {
+            if (moves[i].layer_id != src_layer) {
+                if (src_layer != std::numeric_limits<uint32_t>::max()) ++layer;
+                src_layer = moves[i].layer_id;
+            }
+            layer_of[i] = layer;
+        }
+        const size_t layer_count = moves.size() > 1 ? size_t(layer) + 1 : 0;
+
+        std::vector<float>  all_flow;
+        std::vector<size_t> hits;
+        for (size_t i = 1; i < moves.size(); ++i) {
+            const auto &m = moves[i];
+            if (m.type != EMoveType::Extrude) continue;
+            if (role_filter && m.extrusion_role != *role_filter) continue;
+            const float af = m.actual_volumetric_rate();
+            all_flow.push_back(af);
+            if (af < below) hits.push_back(i);
+        }
+
+        nlohmann::json per_layer = nlohmann::json::object();
+        for (size_t i : hits) {
+            const std::string key = std::to_string(layer_of[i] + 1);
+            per_layer[key] = per_layer.value(key, 0) + 1;
+        }
+
+        auto by_flow = [&moves](size_t a, size_t b) {
+            return moves[a].actual_volumetric_rate() < moves[b].actual_volumetric_rate();
+        };
+        const size_t n_out = std::min(hits.size(), (size_t) limit);
+        std::partial_sort(hits.begin(), hits.begin() + n_out, hits.end(), by_flow);
+        nlohmann::json out_moves = nlohmann::json::array();
+        for (size_t k = 0; k < n_out; ++k) {
+            const auto &m = moves[hits[k]];
+            out_moves.push_back({
+                {"layer", layer_of[hits[k]] + 1},
+                {"z", m.position.z()}, {"x", m.position.x()}, {"y", m.position.y()},
+                {"gcode_line", m.gcode_id},
+                {"role", role_slug(m.extrusion_role)},
+                {"feedrate", m.feedrate}, {"actual_feedrate", m.actual_feedrate},
+                {"flow", m.volumetric_rate()}, {"actual_flow", m.actual_volumetric_rate()},
+                {"internal_only", m.internal_only}});
+        }
+
+        nlohmann::json out = {
+            {"layer_count", layer_count},
+            {"extrusion_moves", all_flow.size()},
+            {"below", below},
+            {"count", hits.size()},
+            {"per_layer", per_layer},
+            {"moves", out_moves}};
+        if (!all_flow.empty()) {
+            const size_t mid = all_flow.size() / 2;
+            std::nth_element(all_flow.begin(), all_flow.begin() + mid, all_flow.end());
+            out["median_actual_flow"] = all_flow[mid];
+            out["min_actual_flow"]    = *std::min_element(all_flow.begin(), all_flow.begin() + mid + 1);
+        } else {
+            out["median_actual_flow"] = nullptr;
+            out["min_actual_flow"]    = nullptr;
+        }
+        return out;
+    }, 30);
+    if (r.contains("error"))
+        return { 409, r };
+    return { 200, r };
+}
+
 // --- project: GET /project, save / open / new -----------------------------------
 
 Response Controller::handle_get_project()
@@ -3795,6 +4033,14 @@ Response Controller::dispatch(const Request &req)
         if (is("GET",  "/api/v1/gcode"))        return handle_get_gcode();
         if (is("GET",  "/api/v1/objects"))      return handle_get_objects();
         if (is("GET",  "/api/v1/plate/render")) return handle_plate_render(t);
+        if (is("GET",  "/api/v1/gcode/flow"))   return handle_gcode_flow(t);
+        if (is("POST", "/api/v1/preview/view")) {
+            try {
+                return handle_preview_view(req.body);
+            } catch (const nlohmann::json::parse_error &) {
+                return { 400, {{"error", "invalid_json"}} };
+            }
+        }
         if (is("GET",  "/api/v1/presets"))      return handle_get_presets();
         if (is("POST", "/api/v1/arrange"))      return handle_arrange();
         if (is("POST", "/api/v1/orient"))       return handle_orient();
