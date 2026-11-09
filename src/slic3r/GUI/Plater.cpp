@@ -3,6 +3,7 @@
 #include "IPrinterAgent.hpp"
 #include "CalibUtils.hpp"
 #include "Flashforge.hpp"
+#include "RemoteAPI/RemoteAPIController.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r_version.h"
 
@@ -9954,7 +9955,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 // convert_model_if(model, answer_convert_from_imperial_units == wxID_YES);
             }
 
-             if (!is_project_file && model.looks_like_multipart_object()) {
+             // Remote API loads must not block on a modal; keep the solids as separate
+             // objects (the dialog's No answer) and let the client decide.
+             if (!is_project_file && model.looks_like_multipart_object()
+                 && !RemoteAPI::Controller::api_ui_task_active()) {
                MessageDialog msg_dlg(q, _L("This file contains several objects positioned at multiple heights.\nInstead of considering them as multiple objects, should the file be loaded as a single object with multiple parts\?") + "\n",
                     _L("Multi-part object detected"), wxICON_WARNING | wxYES | wxNO);
                 if (msg_dlg.ShowModal() == wxID_YES) {
@@ -10296,7 +10300,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 #endif
     if (tolal_model_count <= 0 && !q->m_exported_file && (!loaded_cad_recipe || !cad_can_show)) {
         dlg.Hide();
-        if (!is_user_cancel) {
+        // A Remote API open or load has no one to click OK: skip the modal (the
+        // reply already says objects: 0) instead of blocking the GUI thread.
+        if (!is_user_cancel && !RemoteAPI::Controller::api_ui_task_active()) {
             const wxString text = loaded_cad_recipe
                 ? _L("This project contains a model made in the Design tab and no other geometry. "
                      "Enable \"CAD feature (experimental)\" in Preferences and restart to see and edit it; "
@@ -16302,6 +16308,9 @@ void Plater::load_project(wxString const& filename2,
     sidebar().set_flushing_volume_warning(has_modify);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " load project done";
+    // m_loading_project is cleared by the ScopeGuard at the top of this function
+    // in 2.5, so only the notification is carried over.
+    Slic3r::GUI::RemoteAPI::Controller::notify_project_opened();
 }
 
 // BBS: save logic
@@ -23669,6 +23678,14 @@ void Plater::set_bed_position(Vec2d& pos)
 bool Plater::is_background_process_slicing() const
 {
     return p->m_is_slicing;
+}
+
+// Remote API (F2): abort the background slice from the API's cancel route.
+void Plater::stop_background_slicing()
+{
+    if (p->background_process.running())
+        p->background_process.stop();
+    p->m_is_slicing = false;
 }
 
 //BBS: update slicing context
