@@ -2659,8 +2659,9 @@ static std::set<std::string> project_sensitive_changes(const std::string &path_u
             presets.clear();
         }
     } cleanup{plate_data, project_presets};
-    // Config only: no meshes are read.
-    Model::read_from_archive(into_path(from_u8(path_utf8)).string(), &cfg, &subs, file_type, LoadStrategy::LoadConfig,
+    // Config only: no meshes are read. The returned model still carries the
+    // per-layer custom G-code (Metadata/custom_gcode_per_layer.xml).
+    const Model project_model = Model::read_from_archive(into_path(from_u8(path_utf8)).string(), &cfg, &subs, file_type, LoadStrategy::LoadConfig,
                              &plate_data, &project_presets, &file_version);
 
     auto *bundle = wxGetApp().preset_bundle;
@@ -2715,6 +2716,21 @@ static std::set<std::string> project_sensitive_changes(const std::string &path_u
             if (differs(printer, key, 0)) keys.insert(key);
         } else if (owned_by(Preset::print_options(), key)) {
             if (differs(print, key, 0)) keys.insert(key);
+        }
+    }
+    // Per-layer custom G-code is not a config key, so the loop above never sees
+    // it, yet a Custom or Template entry is raw G-code the print will run at that
+    // height. Any such entry with text counts as a script/G-code change.
+    for (const auto &plate : project_model.plates_custom_gcodes) {
+        bool found = false;
+        for (const CustomGCode::Item &item : plate.second.gcodes)
+            if ((item.type == CustomGCode::Custom || item.type == CustomGCode::Template) && !item.extra.empty()) {
+                found = true;
+                break;
+            }
+        if (found) {
+            keys.insert("custom_gcode_per_layer");
+            break;
         }
     }
     return keys;
