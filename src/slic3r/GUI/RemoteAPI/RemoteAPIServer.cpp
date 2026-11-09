@@ -177,9 +177,18 @@ void Server::start(const Config &cfg)
         tcp::endpoint endpoint(address, static_cast<unsigned short>(m_cfg.port));
         m_acceptor = std::make_unique<tcp::acceptor>(*m_ioc);
         m_acceptor->open(endpoint.protocol());
+#ifdef _WIN32
+        // CeramicaSlicer: on Windows SO_REUSEADDR lets a second process bind the
+        // SAME port and silently steal connections. SO_EXCLUSIVEADDRUSE refuses
+        // that, so two apps can never share the API port. Trade-off: a very fast
+        // relaunch can fail to bind while old connections sit in TIME_WAIT; the
+        // failure is logged below and the API stays off for that run.
+        m_acceptor->set_option(net::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>(true));
+#else
         // SO_REUSEADDR: rebind while a prior socket lingers in TIME_WAIT.
-        // Without it, a rapid kill+relaunch silently fails to bind 13130.
+        // (On POSIX this does not allow two live listeners on one port.)
         m_acceptor->set_option(net::socket_base::reuse_address(true));
+#endif
         m_acceptor->bind(endpoint);
         m_acceptor->listen(net::socket_base::max_listen_connections);
     } catch (const std::exception &e) {

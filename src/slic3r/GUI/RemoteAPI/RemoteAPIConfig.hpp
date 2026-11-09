@@ -10,8 +10,10 @@ namespace Slic3r { namespace GUI { namespace RemoteAPI {
 struct Config
 {
     bool        enabled  { false };
-    int         port     { 13130 };
-    bool        bind_lan { false };
+    // CeramicaSlicer: 13131, one above upstream remote-api's 13130, so this fork
+    // and a stock MaxEllis build can run side by side without fighting for a port.
+    int         port     { 13131 };
+    bool        bind_lan { false }; // loopback (127.0.0.1) only unless the user opts in
     bool        notify   { true };  // toast in-app when the API changes state
     std::string token;
 

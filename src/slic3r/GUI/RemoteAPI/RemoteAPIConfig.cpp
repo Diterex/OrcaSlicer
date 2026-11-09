@@ -15,6 +15,11 @@ Config Config::load()
     Config     cfg;
     cfg.enabled  = app_config->get_bool("remote_api_enabled");
     cfg.bind_lan = app_config->get_bool("remote_api_bind_lan");
+    // Security defaults (CeramicaSlicer): every opt-in below reads as false when the
+    // key is absent (AppConfig::get_bool("") == false), so a fresh install has the API
+    // off, loopback-only, and both guard toggles - remote_api_allow_file_changes
+    // ("Allow deleting and replacing project files") and remote_api_allow_sensitive
+    // ("Allow script, G-code and connection edits") - off. Nothing here writes them.
     if (app_config->has("remote_api_notify")) {
         cfg.notify = app_config->get_bool("remote_api_notify");
     } else {
@@ -23,7 +28,7 @@ Config Config::load()
     }
     if (app_config->has("remote_api_port")) {
         try { cfg.port = std::stoi(app_config->get("remote_api_port")); }
-        catch (...) { cfg.port = 13130; }
+        catch (...) { cfg.port = Config{}.port; }
     }
     cfg.token = app_config->get("remote_api_token");
     if (cfg.token.empty()) {
